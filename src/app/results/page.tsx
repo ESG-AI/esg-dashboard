@@ -18,7 +18,9 @@ export default function Results() {
         if (fileUrls.length === 0) {
             setError("No files provided.");
         } else {
-            setFiles(fileUrls);
+            if (JSON.stringify(fileUrls) !== JSON.stringify(files)) {
+                setFiles(fileUrls);
+            }
         }
         setIsLoading(false);
     }, [fileUrls]);
@@ -39,7 +41,6 @@ export default function Results() {
 
     const handlePrevFile = () => {
         if (fileIndex > 0) {
-
             setShowPdf(false);
 
             setTimeout(() => {
