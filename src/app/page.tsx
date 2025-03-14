@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Upload, Trash2 } from "lucide-react";
 import { url } from "inspector";
@@ -12,8 +12,13 @@ export default function Home() {
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files) {
       setFiles([...files, ...Array.from(event.target.files)]);
+   
     }
   };
+
+  useEffect(()=> {
+    console.log(files)
+  },[files])
 
   const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
