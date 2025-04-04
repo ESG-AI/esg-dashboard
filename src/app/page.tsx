@@ -1,86 +1,57 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Upload, Trash2 } from "lucide-react";
-import { url } from "inspector";
+import { SignedIn, SignedOut, SignUpButton, useAuth } from "@clerk/nextjs";
 
-export default function Home() {
-  const [files, setFiles] = useState< File[]>([]);
+export default function LandingPage() {
   const router = useRouter();
+  const { isSignedIn } = useAuth();
 
-  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (event.target.files) {
-      setFiles([...files, ...Array.from(event.target.files)]);
-   
+  // Redirect signed-in users to the /Upload page
+  useEffect(() => {
+    if (isSignedIn) {
+      router.push("/Upload");
     }
-  };
-
-  useEffect(()=> {
-    console.log(files)
-  },[files])
-
-  const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    if (event.dataTransfer.files) {
-      setFiles([...files, ...Array.from(event.dataTransfer.files)]);
-    }
-  };
-
-  const handleRemoveFile = (index: number) => {
-    setFiles(files.filter((_, i) => i !== index));
-  }
-  
-  const handleStartAnalysis = () => {
-    if (files.length === 0) return;
-
-    const fileUrls = files.map((file) => URL.createObjectURL(file));
-
-    router.push(`/results?${fileUrls.map((url) => `files=${encodeURIComponent(url)}`).join("&")}`);
-  }
+  }, [isSignedIn, router]);
 
   return (
-    <div className="flex flex-col items-center justify-center h-screen bg-black text-white">
-      <div
-        className="border-2 border-gray-600 border-dashed rounded-2xl p-10 flex flex-col items-center w-96 cursor-pointer hover:border-gray-400 transition"
-        onDrop={handleDrop}
-        onDragOver={(e) => e.preventDefault()}
-      >
-        <label className="cursor-pointer flex flex-col items-center">
-          <Upload size={40} className="text-gray-400 mb-4" />
-          <p className="text-gray-400">Drag & drop or click to upload</p>
-          <input 
-            type="file" 
-            accept=".pdf, .docx" 
-            className="hidden"
-            onChange={handleFileChange}
-          />
-        </label>
-      </div>
-      {files.length > 0 && (
-        <div className="mt-4 w-96 max-h-40 overflow-y-auto">
-          {files.map((file, index) => (
-            <div
-              key={index}
-              className="flex justify-between items-center bg-gray-800 p-2 rounded-lg mb-2"
-            >
-              <span className="text-gray-300 text-sm truncate w-72">{file.name}</span>
-              <button onClick={() => handleRemoveFile(index)}>
-                <Trash2 size={16} className="text-red-500 hover:text-red-600"/>
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-      <button
-        onClick={handleStartAnalysis}
-        disabled={files.length === 0}
-        className={`mt-6 px-4 py-2 rounded-lg text-white transition ${
-          files.length > 0 ? "bg-blue-500 hover:bg-blue-600" : "bg-gray-500 cursor-not-allowed"
-        }`}
-      >
-        Start Analysis
-      </button>
+    <div className="flex flex-col items-center justify-center h-screen bg-gradient-to-b from-gray-900 via-gray-800 to-gray-900 text-gray-200">
+      {/* Header Section */}
+      <header className="text-center mb-16">
+        <h1 className="text-5xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-green-400 to-blue-500">
+          AI-Powered ESG Scoring
+        </h1>
+        <p className="mt-4 text-lg text-gray-400 max-w-2xl mx-auto">
+          Revolutionizing ESG (Environment, Social, Governance) scoring with AI. Gain actionable insights into your company's sustainability performance.
+        </p>
+      </header>
+
+      {/* Main Content */}
+      <main className="text-center max-w-3xl">
+        <p className="mb-8 text-gray-300 text-lg">
+          Upload your company's Sustainability Report in PDF format, and let our AI analyze it to provide a comprehensive ESG score.
+        </p>
+        <SignedOut>
+          {/* Get Started Button for Signed-Out Users */}
+          <SignUpButton
+            appearance={{
+              elements: {
+                button: "bg-gradient-to-r from-green-400 to-blue-500 text-white px-8 py-4 rounded-full shadow-lg hover:shadow-xl hover:opacity-90 transition transform hover:scale-105",
+              },
+            }}
+          >
+            <button className="bg-gradient-to-r from-green-400 to-blue-500 text-white px-8 py-4 rounded-full shadow-lg hover:shadow-xl hover:opacity-90 transition transform hover:scale-105">
+              Get Started
+            </button>
+          </SignUpButton>
+        </SignedOut>
+      </main>
+
+      {/* Footer Section */}
+      <footer className="absolute bottom-4 text-sm text-gray-500">
+        © 2025 ESG Scoring Dashboard. All rights reserved.
+      </footer>
     </div>
   );
 }
