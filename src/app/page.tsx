@@ -23,21 +23,25 @@ export default function LandingPage() {
           AI-Powered ESG Scoring
         </h1>
         <p className="mt-4 text-lg text-gray-400 max-w-2xl mx-auto">
-          Revolutionizing ESG (Environment, Social, Governance) scoring with AI. Gain actionable insights into your company's sustainability performance.
+          Revolutionizing ESG (Environment, Social, Governance) scoring with AI.
+          Gain actionable insights into your company's sustainability
+          performance.
         </p>
       </header>
 
       {/* Main Content */}
       <main className="text-center max-w-3xl">
         <p className="mb-8 text-gray-300 text-lg">
-          Upload your company's Sustainability Report in PDF format, and let our AI analyze it to provide a comprehensive ESG score.
+          Upload your company's Sustainability Report in PDF format, and let our
+          AI analyze it to provide a comprehensive ESG score.
         </p>
         <SignedOut>
           {/* Get Started Button for Signed-Out Users */}
           <SignUpButton
             appearance={{
               elements: {
-                button: "bg-gradient-to-r from-green-400 to-blue-500 text-white px-8 py-4 rounded-full shadow-lg hover:shadow-xl hover:opacity-90 transition transform hover:scale-105",
+                button:
+                  "bg-gradient-to-r from-green-400 to-blue-500 text-white px-8 py-4 rounded-full shadow-lg hover:shadow-xl hover:opacity-90 transition transform hover:scale-105",
               },
             }}
           >
