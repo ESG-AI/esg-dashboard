@@ -29,7 +29,11 @@ export default function UploadPage() {
     if (files.length === 0) return;
 
     const fileUrls = files.map((file) => URL.createObjectURL(file));
-    router.push(`/results?${fileUrls.map((url) => `files=${encodeURIComponent(url)}`).join("&")}`);
+    router.push(
+      `/results?${fileUrls
+        .map((url) => `files=${encodeURIComponent(url)}`)
+        .join("&")}`
+    );
   };
 
   return (
@@ -38,7 +42,8 @@ export default function UploadPage() {
       <header className="text-center mb-8">
         <h1 className="text-4xl font-bold text-white">Upload Your Files</h1>
         <p className="mt-2 text-gray-400">
-          Upload your Sustainability Report in PDF or DOCX format to start the ESG analysis.
+          Upload your Sustainability Report in PDF or DOCX format to start the
+          ESG analysis.
         </p>
       </header>
 
@@ -50,7 +55,9 @@ export default function UploadPage() {
       >
         <label className="cursor-pointer flex flex-col items-center">
           <Upload size={48} className="text-blue-500 mb-4" />
-          <p className="text-gray-300 font-medium">Drag & drop or click to upload</p>
+          <p className="text-gray-300 font-medium">
+            Drag & drop or click to upload
+          </p>
           <input
             type="file"
             accept=".pdf, .docx"
@@ -61,32 +68,32 @@ export default function UploadPage() {
       </div>
 
       {/* File List */}
-        {files.length > 0 ? (
+      {files.length > 0 ? (
         <div className="mt-6 w-96 max-h-40 overflow-y-auto bg-gray-800 p-4 rounded-lg">
-            {files.map((file, index) => (
+          {files.map((file, index) => (
             <div
-                key={index}
-                className="flex justify-between items-center p-3 mb-2 w-full h-12" // Fixed height for consistent alignment
+              key={index}
+              className="flex justify-between items-center p-3 mb-2 w-full h-12" // Fixed height for consistent alignment
             >
-                <div className="flex items-center gap-3 w-full overflow-hidden">
+              <div className="flex items-center gap-3 w-full overflow-hidden">
                 <FileText size={16} className="text-gray-400 flex-shrink-0" />
                 <span className="text-gray-300 text-sm truncate">
-                    {file.name}
+                  {file.name}
                 </span>
-                </div>
-                <button
+              </div>
+              <button
                 onClick={() => handleRemoveFile(index)}
                 className="flex-shrink-0 p-1 rounded-full hover:bg-gray-600"
                 style={{ width: "32px", height: "32px" }} // Fixed size for the button
-                >
+              >
                 <Trash2 size={16} className="text-red-500 hover:text-red-600" />
-                </button>
+              </button>
             </div>
-            ))}
+          ))}
         </div>
-        ) : (
+      ) : (
         <p className="mt-6 text-gray-500">No files uploaded yet.</p>
-        )}
+      )}
 
       {/* Start Analysis Button */}
       <button
