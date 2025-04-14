@@ -3,6 +3,9 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 const esgResults = [
   { index: "2-9-b", score: 80, explanation: "Explanation for 2-9-b" },
@@ -52,6 +55,38 @@ const esgResults = [
   { index: "302-3", score: 81, explanation: "Explanation for 302-3" },
 ];
 
+// Response type definition based on the JSON structure
+interface ApiResponse {
+  indicators: {
+    [key: string]: {
+      score: number;
+      reasoning: string;
+      title: string;
+      type: string;
+      sub_type: string;
+      description: string;
+    };
+  };
+  summary: {
+    governance: number;
+    economic: number;
+    social: number;
+    environmental: number;
+    overall: number;
+    spdi_index: number;
+  };
+  token_usage?: {
+    total_tokens_used: number;
+    by_indicator: {
+      [key: string]: {
+        prompt_tokens: number;
+        response_tokens: number;
+        total_tokens: number;
+      };
+    };
+  };
+}
+
 export default function Results() {
   const searchParams = useSearchParams();
   const fileUrls = searchParams.getAll("files");
@@ -60,6 +95,10 @@ export default function Results() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showPdf, setShowPdf] = useState(true);
+  const [apiData, setApiData] = useState<ApiResponse | null>(null);
+  const [apiLoading, setApiLoading] = useState(true);
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [responseTime, setResponseTime] = useState<number | null>(null);
 
   // Process file URLs on component mount
   useEffect(() => {
@@ -72,6 +111,92 @@ export default function Results() {
     }
     setIsLoading(false);
   }, [fileUrls]);
+
+  // Fetch API data
+  useEffect(() => {
+    async function fetchEsgData() {
+      try {
+        // Don't try to fetch if no files are available
+        if (files.length === 0 || isLoading) {
+          return;
+        }
+
+        setApiLoading(true);
+        console.log("Starting API request for file index:", fileIndex);
+
+        // Record start time
+        const startTime = new Date().getTime();
+
+        // Get current PDF file from blob URL
+        const response = await fetch(files[fileIndex]);
+        const blob = await response.blob();
+        console.log("PDF blob retrieved:", blob.size, "bytes");
+
+        // Create FormData and append the PDF
+        const formData = new FormData();
+
+        // Change the field name to "pdf" as required by the backend
+        formData.append("pdf", blob, `file-${fileIndex}.pdf`);
+        // Keep any additional metadata that might be needed
+        formData.append("document_type", "sustainability_report");
+
+        const esg_api = process.env.ESG_API;
+        console.log("ESG API URL:", esg_api);
+
+        const endpoint = files.length > 1 ?
+          `${esg_api}/evaluate-multi` :
+          `${esg_api}/evaluate`;
+        
+        console.log("Sending API request to:", endpoint);
+
+        // Add mode: 'cors' to explicitly handle CORS
+        const apiResponse = await fetch(endpoint, {
+          method: "POST",
+          mode: "cors",
+          body: formData,
+        });
+
+        console.log("API response status:", apiResponse.status);
+
+        if (!apiResponse.ok) {
+          const errorText = await apiResponse.text();
+          console.error("Error response:", errorText);
+          throw new Error(`API responded with status: ${apiResponse.status}`);
+        }
+
+        const data: ApiResponse = await apiResponse.json();
+
+        // Calculate response time in seconds
+        const endTime = new Date().getTime();
+        const responseTimeSeconds = (endTime - startTime) / 1000;
+        setResponseTime(responseTimeSeconds);
+
+        console.log("API data received:", data);
+        setApiData(data);
+        setApiLoading(false);
+      } catch (err) {
+        console.error("API request failed:", err);
+        setApiError(
+          err instanceof Error ? err.message : "Failed to fetch ESG data"
+        );
+        setApiLoading(false);
+      }
+    }
+
+    // Only run when files are loaded or when file index changes
+    if (files.length > 0 && !isLoading) {
+      fetchEsgData();
+    }
+  }, [files, fileIndex, isLoading]);
+
+  // Transform API data into array format for rendering
+  const esgResults = apiData
+    ? Object.entries(apiData.indicators).map(([key, value]) => ({
+        index: key,
+        score: value.score,
+        explanation: value.reasoning,
+      }))
+    : [];
 
   const handleNextFile = () => {
     if (fileIndex < files.length - 1) {
@@ -149,16 +274,129 @@ export default function Results() {
         <h2 className="text-xl font-bold p-4 border-b border-gray-700">
           ESG Analysis Results
         </h2>
-        <div className="flex-1 overflow-y-auto p-4">
-          <div className="space-y-4">
-            {esgResults.map((result, index) => (
-              <div key={index} className="bg-gray-800 p-4 rounded-lg">
-                <h3 className="text-lg font-semibold">{result.index}</h3>
-                <p className="text-gray-300">Score: {result.score}</p>
-                <p className="text-gray-500">{result.explanation}</p>
+
+        {/* Add token usage and response time info */}
+        {!apiLoading && !apiError && apiData && (
+          <div className="p-4 bg-gray-800 border-b border-gray-700">
+            <div className="flex justify-between items-center mb-2">
+              <h3 className="text-md font-semibold text-gray-300">
+                Analysis Summary
+              </h3>
+              {responseTime && (
+                <span className="text-sm text-gray-400">
+                  Response time: {responseTime.toFixed(2)}s
+                </span>
+              )}
+            </div>
+
+            <div className="grid grid-cols-4 gap-2 mt-3">
+              <div className="bg-gray-700 p-2 rounded-md">
+                <p className="text-sm text-gray-400">Total tokens used</p>
+                <p className="text-md font-bold text-blue-400">
+                  {apiData.token_usage?.total_tokens_used?.toLocaleString() ||
+                    "N/A"}
+                </p>
               </div>
-            ))}
+
+              <div className="bg-gray-700 p-2 rounded-md">
+                <p className="text-sm text-gray-400">Overall ESG Score</p>
+                <p className="text-md font-bold text-green-400">
+                  {apiData.summary?.overall || "N/A"}
+                </p>
+              </div>
+
+              <div className="bg-gray-700 p-2 rounded-md">
+                <p className="text-sm text-gray-400">SPDI Index Score</p>
+                <p className="text-md font-bold text-green-400">
+                  {apiData.summary?.spdi_index || "N/A"}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-4 gap-2 mt-3">
+              <div className="bg-gray-700 p-2 rounded-md">
+                <p className="text-xs text-gray-400">Governance</p>
+                <p className="text-md font-bold text-green-400">
+                  {apiData.summary?.governance || "N/A"}
+                </p>
+              </div>
+              <div className="bg-gray-700 p-2 rounded-md">
+                <p className="text-xs text-gray-400">Economic</p>
+                <p className="text-md font-bold text-green-400">
+                  {apiData.summary?.economic || "N/A"}
+                </p>
+              </div>
+              <div className="bg-gray-700 p-2 rounded-md">
+                <p className="text-xs text-gray-400">Social</p>
+                <p className="text-md font-bold text-green-400">
+                  {apiData.summary?.social || "N/A"}
+                </p>
+              </div>
+              <div className="bg-gray-700 p-2 rounded-md">
+                <p className="text-xs text-gray-400">Environmental</p>
+                <p className="text-md font-bold text-green-400">
+                  {apiData.summary?.environmental || "N/A"}
+                </p>
+              </div>
+            </div>
           </div>
+        )}
+
+        <div className="flex-1 overflow-y-auto p-4">
+          {apiLoading ? (
+            <p className="text-center py-8">Loading ESG analysis results...</p>
+          ) : apiError ? (
+            <p className="text-red-500 text-center py-8">{apiError}</p>
+          ) : esgResults.length > 0 ? (
+            <div className="space-y-6">
+              {esgResults.map((result, index) => (
+                <div
+                  key={index}
+                  className="bg-gray-800 p-6 rounded-lg shadow-md"
+                >
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-lg font-semibold text-white">
+                      {result.index}
+                    </h3>
+                    <p className="text-2xl font-bold text-green-400">
+                      {result.score}
+                    </p>
+                  </div>
+                  <div>
+                    <h4 className="text-md font-semibold text-gray-300 mb-2">
+                      Explanation
+                    </h4>
+                    <p className="text-sm text-gray-400 leading-relaxed">
+                      {result.explanation}
+                    </p>
+                  </div>
+
+                  {/* Add token usage for each indicator */}
+                  {apiData?.token_usage?.by_indicator?.[result.index] && (
+                    <div className="mt-4 pt-3 border-t border-gray-700">
+                      <p className="text-xs text-gray-500">
+                        Tokens:{" "}
+                        {apiData.token_usage.by_indicator[
+                          result.index
+                        ].total_tokens.toLocaleString()}
+                        (Prompt:{" "}
+                        {apiData.token_usage.by_indicator[
+                          result.index
+                        ].prompt_tokens.toLocaleString()}
+                        , Response:{" "}
+                        {apiData.token_usage.by_indicator[
+                          result.index
+                        ].response_tokens.toLocaleString()}
+                        )
+                      </p>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-center py-8">No ESG data available.</p>
+          )}
         </div>
       </div>
     </div>
