@@ -4,20 +4,40 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Upload, Trash2, FileText } from "lucide-react";
 
+// Define document type options
+type DocumentType =
+  | "sustainability_report"
+  | "annual_report"
+  | "financial_statement";
+
+// Interface for file with type
+interface FileWithType {
+  file: File;
+  documentType: DocumentType;
+}
+
 export default function UploadPage() {
-  const [files, setFiles] = useState<File[]>([]);
+  const [files, setFiles] = useState<FileWithType[]>([]);
   const router = useRouter();
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files) {
-      setFiles([...files, ...Array.from(event.target.files)]);
+      const newFiles = Array.from(event.target.files).map((file) => ({
+        file,
+        documentType: "sustainability_report" as DocumentType,
+      }));
+      setFiles([...files, ...newFiles]);
     }
   };
 
   const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     if (event.dataTransfer.files) {
-      setFiles([...files, ...Array.from(event.dataTransfer.files)]);
+      const newFiles = Array.from(event.dataTransfer.files).map((file) => ({
+        file,
+        documentType: "sustainability_report" as DocumentType,
+      }));
+      setFiles([...files, ...newFiles]);
     }
   };
 
@@ -25,15 +45,28 @@ export default function UploadPage() {
     setFiles(files.filter((_, i) => i !== index));
   };
 
+  const handleDocumentTypeChange = (
+    index: number,
+    documentType: DocumentType
+  ) => {
+    const updatedFiles = [...files];
+    updatedFiles[index] = { ...updatedFiles[index], documentType };
+    setFiles(updatedFiles);
+  };
+
   const handleStartAnalysis = () => {
     if (files.length === 0) return;
 
-    const fileUrls = files.map((file) => URL.createObjectURL(file));
-    router.push(
-      `/results?${fileUrls
-        .map((url) => `files=${encodeURIComponent(url)}`)
-        .join("&")}`
-    );
+    // Create URL params including both file URLs and document types
+    const params = new URLSearchParams();
+
+    files.forEach((fileWithType, index) => {
+      const url = URL.createObjectURL(fileWithType.file);
+      params.append("files", url);
+      params.append("docTypes", fileWithType.documentType);
+    });
+
+    router.push(`/results?${params.toString()}`);
   };
 
   return (
@@ -70,24 +103,53 @@ export default function UploadPage() {
       {/* File List */}
       {files.length > 0 ? (
         <div className="mt-6 w-96 max-h-40 overflow-y-auto bg-gray-800 p-4 rounded-lg">
-          {files.map((file, index) => (
+          {files.map((fileItem, index) => (
             <div
               key={index}
-              className="flex justify-between items-center p-3 mb-2 w-full h-12" // Fixed height for consistent alignment
+              className="flex flex-col p-3 mb-3 w-full bg-gray-750 rounded-md"
             >
-              <div className="flex items-center gap-3 w-full overflow-hidden">
-                <FileText size={16} className="text-gray-400 flex-shrink-0" />
-                <span className="text-gray-300 text-sm truncate">
-                  {file.name}
-                </span>
+              <div className="flex justify-between items-center mb-2">
+                <div className="flex items-center gap-3 w-full overflow-hidden">
+                  <FileText size={16} className="text-gray-400 flex-shrink-0" />
+                  <span className="text-gray-300 text-sm truncate">
+                    {fileItem.file.name}
+                  </span>
+                </div>
+                <button
+                  onClick={() => handleRemoveFile(index)}
+                  className="flex-shrink-0 p-1 rounded-full hover:bg-gray-600"
+                  style={{ width: "32px", height: "32px" }} // Fixed size for the button
+                >
+                  <Trash2
+                    size={16}
+                    className="text-red-500 hover:text-red-600"
+                  />
+                </button>
               </div>
-              <button
-                onClick={() => handleRemoveFile(index)}
-                className="flex-shrink-0 p-1 rounded-full hover:bg-gray-600"
-                style={{ width: "32px", height: "32px" }} // Fixed size for the button
-              >
-                <Trash2 size={16} className="text-red-500 hover:text-red-600" />
-              </button>
+
+              {/* Document Type Selector */}
+              <div className="mt-2">
+                <p className="text-xs text-gray-400 mb-2">Document Type:</p>
+                <div className="flex gap-2 w-full">
+                  {[
+                    {value: "sustainability_report", label: "Sustainability Report"},
+                    {value: "annual_report", label: "Annual Report"},
+                    {value: "financial_statement", label: "Financial Statement"},
+                  ].map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => handleDocumentTypeChange(index, option.value as DocumentType)}
+                      className={`px-3 py-1.5 text-xs rounded-full flex-1 transition-colors ${fileItem.documentType === option.value
+                        ? "bg-gradient-to-r from-blue-500 to-blue-500 text-white"
+                        : "bg-gray-700 text-gray-300 hover:bg-gray-600"
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           ))}
         </div>
