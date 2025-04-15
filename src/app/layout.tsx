@@ -9,6 +9,8 @@ import {
 } from "@clerk/nextjs";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import Link from "next/link";
+import { History, Clock } from "lucide-react";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -68,6 +70,13 @@ export default function RootLayout({
               </SignedOut>
               <SignedIn>
                 <UserButton />
+                <Link
+                  href="/history"
+                  className="flex items-center gap-2 bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded-lg text-gray-200 hover:text-white transition-all"
+                >
+                  <Clock size={18} />
+                  <span>History</span>
+                </Link>
               </SignedIn>
             </div>
           </header>
