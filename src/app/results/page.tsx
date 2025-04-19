@@ -3,9 +3,6 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import dotenv from "dotenv";
-
-dotenv.config();
 
 const esgResults = [
   { index: "2-9-b", score: 80, explanation: "Explanation for 2-9-b" },
@@ -90,6 +87,8 @@ interface ApiResponse {
 export default function Results() {
   const searchParams = useSearchParams();
   const fileUrls = searchParams.getAll("files");
+  const fileNames = searchParams.getAll("fileNames");
+  const docTypes = searchParams.getAll("docTypes");
   const [fileIndex, setFileIndex] = useState(0);
   const [files, setFiles] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -135,18 +134,19 @@ export default function Results() {
         // Create FormData and append the PDF
         const formData = new FormData();
 
-        // Change the field name to "pdf" as required by the backend
-        formData.append("pdf", blob, `file-${fileIndex}.pdf`);
+        const originalFilename = fileNames[fileIndex] || `file-${fileIndex}.pdf`;
+        formData.append("pdf", blob, originalFilename);
         // Keep any additional metadata that might be needed
-        formData.append("document_type", "sustainability_report");
+        formData.append("document_type", docTypes[fileIndex] || "sustainability_report");
 
-        const esg_api = process.env.ESG_API;
+        const esg_api = process.env.NEXT_PUBLIC_ESG_API;
         console.log("ESG API URL:", esg_api);
 
-        const endpoint = files.length > 1 ?
-          `${esg_api}/evaluate-multi` :
-          `${esg_api}/evaluate`;
-        
+        const endpoint =
+          files.length > 1
+            ? `${esg_api}/evaluate-multi`
+            : `${esg_api}/evaluate`;
+
         console.log("Sending API request to:", endpoint);
 
         // Add mode: 'cors' to explicitly handle CORS
@@ -159,7 +159,7 @@ export default function Results() {
         console.log("API response status:", apiResponse.status);
 
         if (!apiResponse.ok) {
-          const errorText = await apiResponse.text();
+          const errorText = apiResponse.text();
           console.error("Error response:", errorText);
           throw new Error(`API responded with status: ${apiResponse.status}`);
         }
@@ -299,43 +299,9 @@ export default function Results() {
               </div>
 
               <div className="bg-gray-700 p-2 rounded-md">
-                <p className="text-sm text-gray-400">Overall ESG Score</p>
-                <p className="text-md font-bold text-green-400">
-                  {apiData.summary?.overall || "N/A"}
-                </p>
-              </div>
-
-              <div className="bg-gray-700 p-2 rounded-md">
                 <p className="text-sm text-gray-400">SPDI Index Score</p>
                 <p className="text-md font-bold text-green-400">
                   {apiData.summary?.spdi_index || "N/A"}
-                </p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-4 gap-2 mt-3">
-              <div className="bg-gray-700 p-2 rounded-md">
-                <p className="text-xs text-gray-400">Governance</p>
-                <p className="text-md font-bold text-green-400">
-                  {apiData.summary?.governance || "N/A"}
-                </p>
-              </div>
-              <div className="bg-gray-700 p-2 rounded-md">
-                <p className="text-xs text-gray-400">Economic</p>
-                <p className="text-md font-bold text-green-400">
-                  {apiData.summary?.economic || "N/A"}
-                </p>
-              </div>
-              <div className="bg-gray-700 p-2 rounded-md">
-                <p className="text-xs text-gray-400">Social</p>
-                <p className="text-md font-bold text-green-400">
-                  {apiData.summary?.social || "N/A"}
-                </p>
-              </div>
-              <div className="bg-gray-700 p-2 rounded-md">
-                <p className="text-xs text-gray-400">Environmental</p>
-                <p className="text-md font-bold text-green-400">
-                  {apiData.summary?.environmental || "N/A"}
                 </p>
               </div>
             </div>
