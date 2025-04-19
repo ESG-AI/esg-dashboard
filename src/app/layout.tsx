@@ -37,7 +37,9 @@ export default function RootLayout({
       <html lang="en">
         <body className="antialiased bg-gray-900 text-gray-200">
           <header className="flex justify-between items-center p-4 h-16 bg-gray-800 shadow-md">
-            <h1 className="text-xl font-bold text-white">ESG AI</h1>
+            <Link href="/Upload" className="hover:opacity-80 transition-opacity">
+              <h1 className="text-xl font-bold text-white cursor-pointer">SPDI AI</h1>
+            </Link>
             <div className="flex gap-4">
               <SignedOut>
                 {/* Custom Sign In Button */}
