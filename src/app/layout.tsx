@@ -9,6 +9,8 @@ import {
 } from "@clerk/nextjs";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import Link from "next/link";
+import { History, Clock } from "lucide-react";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -35,7 +37,9 @@ export default function RootLayout({
       <html lang="en">
         <body className="antialiased bg-gray-900 text-gray-200">
           <header className="flex justify-between items-center p-4 h-16 bg-gray-800 shadow-md">
-            <h1 className="text-xl font-bold text-white">ESG AI</h1>
+            <Link href="/Upload" className="hover:opacity-80 transition-opacity">
+              <h1 className="text-xl font-bold text-white cursor-pointer">SPDI AI</h1>
+            </Link>
             <div className="flex gap-4">
               <SignedOut>
                 {/* Custom Sign In Button */}
@@ -68,6 +72,13 @@ export default function RootLayout({
               </SignedOut>
               <SignedIn>
                 <UserButton />
+                <Link
+                  href="/history"
+                  className="flex items-center gap-2 bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded-lg text-gray-200 hover:text-white transition-all"
+                >
+                  <Clock size={18} />
+                  <span>History</span>
+                </Link>
               </SignedIn>
             </div>
           </header>

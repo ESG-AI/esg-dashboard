@@ -54,20 +54,21 @@ export default function UploadPage() {
     setFiles(updatedFiles);
   };
 
-  const handleStartAnalysis = () => {
-    if (files.length === 0) return;
+ const handleStartAnalysis = () => {
+  if (files.length === 0) return;
 
-    // Create URL params including both file URLs and document types
-    const params = new URLSearchParams();
+  // Create URL params including both file URLs, document types, and original filenames
+  const params = new URLSearchParams();
 
-    files.forEach((fileWithType, index) => {
-      const url = URL.createObjectURL(fileWithType.file);
-      params.append("files", url);
-      params.append("docTypes", fileWithType.documentType);
-    });
+  files.forEach((fileWithType, index) => {
+    const url = URL.createObjectURL(fileWithType.file);
+    params.append("files", url);
+    params.append("docTypes", fileWithType.documentType);
+    params.append("fileNames", fileWithType.file.name); // Add original filename
+  });
 
-    router.push(`/results?${params.toString()}`);
-  };
+  router.push(`/results?${params.toString()}`);
+};
 
   return (
     <div className="flex flex-col items-center justify-center h-screen bg-gradient-to-b from-gray-900 via-gray-800 to-gray-900 text-gray-200">
