@@ -98,6 +98,7 @@ export default function Results() {
   const [apiLoading, setApiLoading] = useState(true);
   const [apiError, setApiError] = useState<string | null>(null);
   const [responseTime, setResponseTime] = useState<number | null>(null);
+  const [showTooltip, setShowTooltip] = useState(false);
 
   // Process file URLs on component mount
   useEffect(() => {
@@ -134,10 +135,14 @@ export default function Results() {
         // Create FormData and append the PDF
         const formData = new FormData();
 
-        const originalFilename = fileNames[fileIndex] || `file-${fileIndex}.pdf`;
+        const originalFilename =
+          fileNames[fileIndex] || `file-${fileIndex}.pdf`;
         formData.append("pdf", blob, originalFilename);
         // Keep any additional metadata that might be needed
-        formData.append("document_type", docTypes[fileIndex] || "sustainability_report");
+        formData.append(
+          "document_type",
+          docTypes[fileIndex] || "sustainability_report"
+        );
 
         const esg_api = process.env.NEXT_PUBLIC_ESG_API;
         console.log("ESG API URL:", esg_api);
@@ -291,10 +296,30 @@ export default function Results() {
 
             <div className="grid grid-cols-4 gap-2 mt-3">
               <div className="bg-gray-700 p-2 rounded-md">
-                <p className="text-sm text-gray-400">Total tokens used</p>
+                <div className="flex items-center">
+                  <p className="text-sm text-gray-400">Total tokens used</p>
+                  <div className="relative ml-1">
+                    <span
+                      className="text-gray-500 text-xs cursor-help"
+                      onMouseEnter={() => setShowTooltip(true)}
+                      onMouseLeave={() => setShowTooltip(false)}
+                    >
+                      ⓘ
+                    </span>
+                    {/* Tooltip */}
+                    {showTooltip && (
+                      <div
+                        className="absolute bg-gray-800 text-xs text-gray-300 p-2 rounded shadow-lg 
+                        w-48 left-0 top-full mt-1 z-10"
+                      >
+                        The total token count is the sum of input (prompt) tokens
+                        and output (response) tokens used during the analysis.
+                      </div>
+                    )}
+                  </div>
+                </div>
                 <p className="text-md font-bold text-blue-400">
-                  {apiData.token_usage?.total_tokens_used?.toLocaleString() ||
-                    "N/A"}
+                  {apiData.token_usage?.total_tokens_used?.toLocaleString() || "N/A"}
                 </p>
               </div>
 
