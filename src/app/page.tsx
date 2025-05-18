@@ -8,10 +8,10 @@ export default function LandingPage() {
   const router = useRouter();
   const { isSignedIn } = useAuth();
 
-  // Redirect signed-in users to the /Upload page
+  // Redirect signed-in users to the /upload page
   useEffect(() => {
     if (isSignedIn) {
-      router.push("/Upload");
+      router.push("/upload");
     }
   }, [isSignedIn, router]);
 
