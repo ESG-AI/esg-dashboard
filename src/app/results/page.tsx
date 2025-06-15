@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
@@ -84,7 +84,7 @@ interface ApiResponse {
   };
 }
 
-export default function Results() {
+function ResultsContent() {
   const searchParams = useSearchParams();
   const fileUrls = searchParams.getAll("files");
   const fileNames = searchParams.getAll("fileNames");
@@ -312,14 +312,16 @@ export default function Results() {
                         className="absolute bg-gray-800 text-xs text-gray-300 p-2 rounded shadow-lg 
                         w-48 left-0 top-full mt-1 z-10"
                       >
-                        The total token count is the sum of input (prompt) tokens
-                        and output (response) tokens used during the analysis.
+                        The total token count is the sum of input (prompt)
+                        tokens and output (response) tokens used during the
+                        analysis.
                       </div>
                     )}
                   </div>
                 </div>
                 <p className="text-md font-bold text-blue-400">
-                  {apiData.token_usage?.total_tokens_used?.toLocaleString() || "N/A"}
+                  {apiData.token_usage?.total_tokens_used?.toLocaleString() ||
+                    "N/A"}
                 </p>
               </div>
 
@@ -391,5 +393,19 @@ export default function Results() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function Results() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex h-screen bg-black text-white p-6 items-center justify-center">
+          Loading...
+        </div>
+      }
+    >
+      <ResultsContent />
+    </Suspense>
   );
 }
