@@ -12,6 +12,9 @@ import {
   ArrowDownAZ,
   ArrowUpAZ,
   Filter,
+  Edit3,
+  Save,
+  X,
 } from "lucide-react";
 
 // Type definitions
@@ -43,6 +46,8 @@ interface DocumentSummary {
       title: string;
       type: string;
       subtype: string;
+      description: string;
+      reasoning: string;
     };
   };
   spdiIndex?: number;
@@ -74,6 +79,14 @@ export default function HistoryPage() {
     sortOrder: "desc",
   });
   const [showFilters, setShowFilters] = useState(false);
+
+  // Edit state for indicators
+  const [editingIndicators, setEditingIndicators] = useState<Set<string>>(
+    new Set()
+  );
+  const [editedValues, setEditedValues] = useState<{
+    [key: string]: { score: number; reasoning: string };
+  }>({});
 
   const ITEMS_PER_PAGE = 10;
 
@@ -137,6 +150,119 @@ export default function HistoryPage() {
 
   const handlePageChange = (newPage: number) => {
     setPage(newPage);
+  };
+
+  // Edit functions
+  const handleEditIndicator = (
+    documentId: string,
+    indicatorKey: string,
+    currentScore: number,
+    currentReasoning: string
+  ) => {
+    const editKey = `${documentId}-${indicatorKey}`;
+    setEditingIndicators((prev) => new Set(prev).add(editKey));
+    setEditedValues((prev) => ({
+      ...prev,
+      [editKey]: { score: currentScore, reasoning: currentReasoning },
+    }));
+  };
+
+  const handleCancelEdit = (documentId: string, indicatorKey: string) => {
+    const editKey = `${documentId}-${indicatorKey}`;
+    setEditingIndicators((prev) => {
+      const newSet = new Set(prev);
+      newSet.delete(editKey);
+      return newSet;
+    });
+    setEditedValues((prev) => {
+      const newValues = { ...prev };
+      delete newValues[editKey];
+      return newValues;
+    });
+  };
+
+  const handleSaveIndicator = async (
+    documentId: string,
+    indicatorKey: string
+  ) => {
+    const editKey = `${documentId}-${indicatorKey}`;
+    const editedValue = editedValues[editKey];
+    if (!editedValue) return;
+
+    try {
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_ESG_API}/documents/${documentId}/indicator/${indicatorKey}`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            score: editedValue.score,
+            reasoning: editedValue.reasoning,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to update indicator: ${response.status}`);
+      }
+
+      const result = await response.json();
+
+      // Update local state
+      setDocuments((prev) =>
+        prev.map((doc) =>
+          doc.id === documentId
+            ? {
+                ...doc,
+                indicators: {
+                  ...doc.indicators,
+                  [indicatorKey]: {
+                    ...doc.indicators[indicatorKey],
+                    score: editedValue.score,
+                    reasoning: editedValue.reasoning,
+                  },
+                },
+                // Update SPDI index if provided
+                spdiIndex: result.updated_spdi_index ?? doc.spdiIndex,
+              }
+            : doc
+        )
+      );
+
+      // Exit edit mode
+      handleCancelEdit(documentId, indicatorKey);
+
+      console.log("Indicator updated successfully:", result);
+    } catch (error) {
+      console.error("Error updating indicator:", error);
+      alert("Failed to update indicator. Please try again.");
+    }
+  };
+
+  const handleScoreChange = (
+    documentId: string,
+    indicatorKey: string,
+    newScore: number
+  ) => {
+    const editKey = `${documentId}-${indicatorKey}`;
+    setEditedValues((prev) => ({
+      ...prev,
+      [editKey]: { ...prev[editKey], score: newScore },
+    }));
+  };
+
+  const handleReasoningChange = (
+    documentId: string,
+    indicatorKey: string,
+    newReasoning: string
+  ) => {
+    const editKey = `${documentId}-${indicatorKey}`;
+    setEditedValues((prev) => ({
+      ...prev,
+      [editKey]: { ...prev[editKey], reasoning: newReasoning },
+    }));
   };
 
   return (
@@ -340,96 +466,179 @@ export default function HistoryPage() {
           )}
         </div>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full bg-gray-800 rounded-lg overflow-hidden">
-            <thead className="bg-gray-700">
-              <tr>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                  Document Name
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                  Upload Date
-                </th>
-                <th className="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">
-                  SPDI Index
-                </th>
-                <th className="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider hidden md:table-cell">
-                  Indicators
-                </th>
-                <th className="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-700">
-              {documents.map((doc) => (
-                <tr key={doc.id} className="hover:bg-gray-750 transition">
-                  <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-white">
+        <div className="space-y-4">
+          {documents.map((doc) => (
+            <div key={doc.id} className="bg-gray-800 rounded-lg p-6 shadow-md">
+              {/* Document Header */}
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-4">
+                <div className="flex-1">
+                  <h3 className="text-lg font-semibold text-white mb-2">
                     {doc.name}
-                  </td>
-                  <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-300">
+                  </h3>
+                  <div className="flex items-center space-x-4 text-sm text-gray-400">
                     <div className="flex items-center">
-                      <Calendar size={16} className="mr-2 text-gray-400" />
+                      <Calendar size={16} className="mr-2" />
                       {new Date(doc.uploadDate).toLocaleDateString()}
                     </div>
-                  </td>
-                  <td className="px-4 py-4 whitespace-nowrap text-sm text-center">
-                    <span
-                      className={`inline-flex items-center justify-center w-10 h-10 rounded-full 
-                      ${
-                        doc.spdiIndex
-                          ? getScoreColorClass(doc.spdiIndex)
-                          : "bg-gray-700 text-gray-400"
-                      }`}
-                    >
-                      {doc.spdiIndex ? (Number.isInteger(doc.spdiIndex) ? doc.spdiIndex : doc.spdiIndex.toFixed(2)) : "N/A"}
-                    </span>
-                  </td>
-                  <td className="px-4 py-4 text-sm hidden md:table-cell">
-                    <div className="flex flex-wrap gap-2 justify-center">
-                      {Object.entries(doc.indicators)
-                        .slice(0, 3)
-                        .map(([key, indicator]) => (
-                          <span
-                            key={key}
-                            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium 
-              ${getScoreColorClass(indicator.score)}`}
-                            title={`${key}: ${indicator.title}`}
-                          >
-                            {indicator.score}
-                          </span>
-                        ))}
-                      {Object.keys(doc.indicators).length > 3 && (
-                        <span className="text-gray-400 text-xs">
-                          +{Object.keys(doc.indicators).length - 3} more
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-4 py-4 whitespace-nowrap text-sm text-right">
-                    <div className="flex justify-center space-x-2">
-                      <Link
-                        href={`/detail/${doc.id}`}
-                        className="text-blue-400 hover:text-blue-300 transition"
-                        title="View Details"
+                    <div className="flex items-center">
+                      <span
+                        className={`inline-flex items-center justify-center w-8 h-8 rounded-full mr-2
+                        ${
+                          doc.spdiIndex
+                            ? getScoreColorClass(doc.spdiIndex)
+                            : "bg-gray-700 text-gray-400"
+                        }`}
                       >
-                        <span className="sr-only">View Details</span>
-                        View
-                      </Link>
-                      <button
-                        onClick={() => handleDownloadPdf(doc.id)}
-                        className="text-green-400 hover:text-green-300 transition"
-                        title="Download PDF"
-                      >
-                        <Download size={16} />
-                        <span className="sr-only">Download PDF</span>
-                      </button>
+                        {doc.spdiIndex
+                          ? Number.isInteger(doc.spdiIndex)
+                            ? doc.spdiIndex
+                            : doc.spdiIndex.toFixed(1)
+                          : "N/A"}
+                      </span>
+                      <span>SPDI Index</span>
                     </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  </div>
+                </div>
+                <div className="flex space-x-2 mt-4 md:mt-0">
+                  <Link
+                    href={`/detail/${doc.id}`}
+                    className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition flex items-center"
+                  >
+                    <span className="mr-2">View Details</span>
+                  </Link>
+                  <button
+                    onClick={() => handleDownloadPdf(doc.id)}
+                    className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition flex items-center"
+                  >
+                    <Download size={16} className="mr-2" />
+                    Download PDF
+                  </button>
+                </div>
+              </div>
+
+              {/* Indicators Section */}
+              <div className="border-t border-gray-700 pt-4">
+                <h4 className="text-md font-semibold text-gray-300 mb-4">
+                  Indicators ({Object.keys(doc.indicators).length})
+                </h4>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {Object.entries(doc.indicators).map(([key, indicator]) => {
+                    const editKey = `${doc.id}-${key}`;
+                    const isEditing = editingIndicators.has(editKey);
+                    const editedValue = editedValues[editKey];
+
+                    return (
+                      <div
+                        key={key}
+                        className="bg-gray-700 p-4 rounded-lg border border-gray-600"
+                      >
+                        <div className="flex justify-between items-start mb-3">
+                          <div className="flex-1">
+                            <h5 className="text-sm font-semibold text-white mb-1">
+                              {key}
+                            </h5>
+                            <p className="text-xs text-gray-400 mb-2">
+                              {indicator.title}
+                            </p>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            {isEditing ? (
+                              <>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="4"
+                                  value={editedValue?.score ?? indicator.score}
+                                  onChange={(e) =>
+                                    handleScoreChange(
+                                      doc.id,
+                                      key,
+                                      parseInt(e.target.value) || 0
+                                    )
+                                  }
+                                  className="w-16 bg-gray-600 text-white px-2 py-1 rounded text-center text-sm"
+                                />
+                                <span className="text-gray-400 text-sm">
+                                  / 4
+                                </span>
+                              </>
+                            ) : (
+                              <span
+                                className={`inline-flex items-center justify-center w-8 h-8 rounded-full text-sm font-medium
+                                ${getScoreColorClass(indicator.score)}`}
+                              >
+                                {indicator.score}
+                              </span>
+                            )}
+                            {isEditing ? (
+                              <div className="flex space-x-1">
+                                <button
+                                  onClick={() =>
+                                    handleSaveIndicator(doc.id, key)
+                                  }
+                                  className="bg-green-600 hover:bg-green-700 text-white p-1 rounded transition"
+                                  title="Save"
+                                >
+                                  <Save size={14} />
+                                </button>
+                                <button
+                                  onClick={() => handleCancelEdit(doc.id, key)}
+                                  className="bg-gray-600 hover:bg-gray-700 text-white p-1 rounded transition"
+                                  title="Cancel"
+                                >
+                                  <X size={14} />
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() =>
+                                  handleEditIndicator(
+                                    doc.id,
+                                    key,
+                                    indicator.score,
+                                    indicator.reasoning
+                                  )
+                                }
+                                className="bg-blue-600 hover:bg-blue-700 text-white p-1 rounded transition"
+                                title="Edit"
+                              >
+                                <Edit3 size={14} />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        <div>
+                          <h6 className="text-xs font-medium text-gray-300 mb-2">
+                            Reasoning
+                          </h6>
+                          {isEditing ? (
+                            <textarea
+                              value={
+                                editedValue?.reasoning ?? indicator.reasoning
+                              }
+                              onChange={(e) =>
+                                handleReasoningChange(
+                                  doc.id,
+                                  key,
+                                  e.target.value
+                                )
+                              }
+                              className="w-full bg-gray-600 text-white p-2 rounded border border-gray-500 focus:border-blue-500 focus:outline-none resize-vertical text-sm"
+                              rows={3}
+                            />
+                          ) : (
+                            <p className="text-xs text-gray-400 leading-relaxed">
+                              {indicator.reasoning}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
@@ -452,7 +661,7 @@ export default function HistoryPage() {
             </button>
             <button
               onClick={() => handlePageChange(page + 1)}
-              disabled={page * ITEMS_PER_PAGE >= totalDocuments}
+              disabled={page >= Math.ceil(totalDocuments / ITEMS_PER_PAGE)}
               className="flex items-center bg-gray-800 px-3 py-2 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-700 transition"
             >
               Next
