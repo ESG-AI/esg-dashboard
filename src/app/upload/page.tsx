@@ -54,21 +54,21 @@ export default function UploadPage() {
     setFiles(updatedFiles);
   };
 
- const handleStartAnalysis = () => {
-  if (files.length === 0) return;
+  const handleStartAnalysis = () => {
+    if (files.length === 0) return;
 
-  // Create URL params including both file URLs, document types, and original filenames
-  const params = new URLSearchParams();
+    // Create URL params including both file URLs, document types, and original filenames
+    const params = new URLSearchParams();
 
-  files.forEach((fileWithType, index) => {
-    const url = URL.createObjectURL(fileWithType.file);
-    params.append("files", url);
-    params.append("docTypes", fileWithType.documentType);
-    params.append("fileNames", fileWithType.file.name); // Add original filename
-  });
+    files.forEach((fileWithType, index) => {
+      const url = URL.createObjectURL(fileWithType.file);
+      params.append("files", url);
+      params.append("docTypes", fileWithType.documentType);
+      params.append("fileNames", fileWithType.file.name); // Add original filename
+    });
 
-  router.push(`/results?${params.toString()}`);
-};
+    router.push(`/results?${params.toString()}`);
+  };
 
   return (
     <div className="flex flex-col items-center justify-center h-screen bg-gradient-to-b from-gray-900 via-gray-800 to-gray-900 text-gray-200">
@@ -133,17 +133,29 @@ export default function UploadPage() {
                 <p className="text-xs text-gray-400 mb-2">Document Type:</p>
                 <div className="flex gap-2 w-full">
                   {[
-                    {value: "sustainability_report", label: "Sustainability Report"},
-                    {value: "annual_report", label: "Annual Report"},
-                    {value: "financial_statement", label: "Financial Statement"},
+                    {
+                      value: "sustainability_report",
+                      label: "Sustainability Report",
+                    },
+                    { value: "annual_report", label: "Annual Report" },
+                    {
+                      value: "financial_statement",
+                      label: "Financial Statement",
+                    },
                   ].map((option) => (
                     <button
                       key={option.value}
                       type="button"
-                      onClick={() => handleDocumentTypeChange(index, option.value as DocumentType)}
-                      className={`px-3 py-1.5 text-xs rounded-full flex-1 transition-colors ${fileItem.documentType === option.value
-                        ? "bg-gradient-to-r from-blue-500 to-blue-500 text-white"
-                        : "bg-gray-700 text-gray-300 hover:bg-gray-600"
+                      onClick={() =>
+                        handleDocumentTypeChange(
+                          index,
+                          option.value as DocumentType
+                        )
+                      }
+                      className={`px-3 py-1.5 text-xs rounded-full flex-1 transition-colors ${
+                        fileItem.documentType === option.value
+                          ? "bg-gradient-to-r from-blue-500 to-blue-500 text-white"
+                          : "bg-gray-700 text-gray-300 hover:bg-gray-600"
                       }`}
                     >
                       {option.label}

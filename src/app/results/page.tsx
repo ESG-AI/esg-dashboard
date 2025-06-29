@@ -1,58 +1,42 @@
 "use client";
 
-import { useEffect, useState, Suspense } from "react";
+import { useEffect, useState, Suspense, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
-const esgResults = [
-  { index: "2-9-b", score: 80, explanation: "Explanation for 2-9-b" },
-  {
-    index: "2-16-a (structure)",
-    score: 85,
-    explanation: "Explanation for 2-16-a (structure)",
-  },
-  { index: "2-9-c", score: 78, explanation: "Explanation for 2-9-c" },
-  {
-    index: "2-29 (structure)",
-    score: 82,
-    explanation: "Explanation for 2-29 (structure)",
-  },
-  { index: "3-2-a", score: 90, explanation: "Explanation for 3-2-a" },
-  { index: "2-5", score: 88, explanation: "Explanation for 2-5" },
-  {
-    index: "2-16-a (stakeholder engagement)",
-    score: 84,
-    explanation: "Explanation for 2-16-a (stakeholder engagement)",
-  },
-  { index: "2-30-a", score: 76, explanation: "Explanation for 2-30-a" },
-  { index: "2-29", score: 81, explanation: "Explanation for 2-29" },
-  { index: "301-2", score: 79, explanation: "Explanation for 301-2" },
-  { index: "301-1", score: 77, explanation: "Explanation for 301-1" },
-  { index: "301-3", score: 80, explanation: "Explanation for 301-3" },
-  { index: "204-1", score: 83, explanation: "Explanation for 204-1" },
-  { index: "308-1", score: 86, explanation: "Explanation for 308-1" },
-  { index: "308-2", score: 89, explanation: "Explanation for 308-2" },
-  { index: "414-1", score: 87, explanation: "Explanation for 414-1" },
-  { index: "414-2", score: 85, explanation: "Explanation for 414-2" },
-  { index: "306-2", score: 88, explanation: "Explanation for 306-2" },
-  { index: "409-1", score: 84, explanation: "Explanation for 409-1" },
-  { index: "407-1", score: 82, explanation: "Explanation for 407-1" },
-  { index: "403-1", score: 81, explanation: "Explanation for 403-1" },
-  { index: "417-1", score: 79, explanation: "Explanation for 417-1" },
-  { index: "417-2", score: 78, explanation: "Explanation for 417-2" },
-  { index: "417-3", score: 80, explanation: "Explanation for 417-3" },
-  { index: "2-27", score: 83, explanation: "Explanation for 2-27" },
-  { index: "306-5", score: 85, explanation: "Explanation for 306-5" },
-  { index: "303-4", score: 87, explanation: "Explanation for 303-4" },
-  { index: "305-1", score: 89, explanation: "Explanation for 305-1" },
-  { index: "305-2", score: 88, explanation: "Explanation for 305-2" },
-  { index: "305-3", score: 86, explanation: "Explanation for 305-3" },
-  { index: "302-1", score: 84, explanation: "Explanation for 302-1" },
-  { index: "302-2", score: 82, explanation: "Explanation for 302-2" },
-  { index: "302-3", score: 81, explanation: "Explanation for 302-3" },
-];
+// Type definitions for the new API flow
+interface UploadResponse {
+  s3_object_key: string;
+  filename: string;
+}
 
-// Response type definition based on the JSON structure
+interface GriResponse {
+  indicators: {
+    [key: string]: {
+      score: number;
+      reasoning: string;
+      title: string;
+      type: string;
+      sub_type: string;
+      description: string;
+    };
+  };
+  summary: {
+    spdi_index: number;
+  };
+  id: number;
+  token_usage?: {
+    total_tokens_used: number;
+    by_indicator: {
+      [key: string]: {
+        prompt_tokens: number;
+        response_tokens: number;
+        total_tokens: number;
+      };
+    };
+  };
+}
+
 interface ApiResponse {
   indicators: {
     [key: string]: {
@@ -84,6 +68,14 @@ interface ApiResponse {
   };
 }
 
+type GriType = "governance" | "economic" | "social" | "environmental";
+const griTypes: GriType[] = [
+  "governance",
+  "economic",
+  "social",
+  "environmental",
+];
+
 function ResultsContent() {
   const searchParams = useSearchParams();
   const fileUrls = searchParams.getAll("files");
@@ -97,8 +89,29 @@ function ResultsContent() {
   const [apiData, setApiData] = useState<ApiResponse | null>(null);
   const [apiLoading, setApiLoading] = useState(true);
   const [apiError, setApiError] = useState<string | null>(null);
-  const [responseTime, setResponseTime] = useState<number | null>(null);
-  const [showTooltip, setShowTooltip] = useState(false);
+  const [analysisProgress, setAnalysisProgress] = useState<{
+    current: number;
+    total: number;
+    currentType: string;
+  } | null>(null);
+
+  // New state for progressive loading
+  const [allIndicators, setAllIndicators] = useState<any[]>([]);
+  const [spdiIndex, setSpdiIndex] = useState<number>(0);
+
+  // At the top of ResultsContent
+  const [currentGriType, setCurrentGriType] = useState<GriType | null>(null);
+  const [finishedGriTypes, setFinishedGriTypes] = useState<GriType[]>([]);
+  const [inProgressGriTypes, setInProgressGriTypes] = useState<GriType[]>([]);
+
+  // Edit state for indicators
+  const [editingIndicators, setEditingIndicators] = useState<Set<number>>(
+    new Set()
+  );
+  const [editedValues, setEditedValues] = useState<{
+    [key: number]: { score: number; explanation: string };
+  }>({});
+  const [documentId, setDocumentId] = useState<number | null>(null);
 
   // Process file URLs on component mount
   useEffect(() => {
@@ -114,6 +127,14 @@ function ResultsContent() {
 
   // Fetch API data
   useEffect(() => {
+    console.log(
+      "Effect triggered for fileIndex:",
+      fileIndex,
+      "files:",
+      files,
+      "isLoading:",
+      isLoading
+    );
     async function fetchEsgData() {
       try {
         // Don't try to fetch if no files are available
@@ -122,69 +143,354 @@ function ResultsContent() {
         }
 
         setApiLoading(true);
+        setAnalysisProgress({
+          current: 0,
+          total: 5,
+          currentType: "Uploading file...",
+        });
+
+        // Reset progressive loading state
+        setAllIndicators([]);
+        setSpdiIndex(0);
+        setDocumentId(null);
+
         console.log("Starting API request for file index:", fileIndex);
-
-        // Record start time
-        const startTime = new Date().getTime();
-
-        // Get current PDF file from blob URL
-        const response = await fetch(files[fileIndex]);
-        const blob = await response.blob();
-        console.log("PDF blob retrieved:", blob.size, "bytes");
-
-        // Create FormData and append the PDF
-        const formData = new FormData();
-
-        const originalFilename =
-          fileNames[fileIndex] || `file-${fileIndex}.pdf`;
-        formData.append("pdf", blob, originalFilename);
-        // Keep any additional metadata that might be needed
-        formData.append(
-          "document_type",
-          docTypes[fileIndex] || "sustainability_report"
-        );
 
         const esg_api = process.env.NEXT_PUBLIC_ESG_API;
         console.log("ESG API URL:", esg_api);
 
-        const endpoint =
-          files.length > 1
-            ? `${esg_api}/evaluate-multi`
-            : `${esg_api}/evaluate`;
+        // Step 1: Upload the PDF(s) to get s3_object_key(s)
+        const isMultiFile = files.length > 1;
+        let uploadData: UploadResponse | UploadResponse[];
+        let filenameWithoutExtension: string;
 
-        console.log("Sending API request to:", endpoint);
+        if (isMultiFile) {
+          // Upload all files for multi-file analysis
+          console.log("Uploading multiple files for multi-file analysis...");
+          const uploadPromises = files.map(async (fileUrl, idx) => {
+            const response = await fetch(fileUrl);
+            const blob = await response.blob();
+            const originalFilename = fileNames[idx] || `file-${idx}.pdf`;
 
-        // Add mode: 'cors' to explicitly handle CORS
-        const apiResponse = await fetch(endpoint, {
-          method: "POST",
-          mode: "cors",
-          body: formData,
-        });
+            const uploadFormData = new FormData();
+            uploadFormData.append("pdf", blob, originalFilename);
 
-        console.log("API response status:", apiResponse.status);
+            const uploadResponse = await fetch(`${esg_api}/upload`, {
+              method: "POST",
+              mode: "cors",
+              body: uploadFormData,
+            });
 
-        if (!apiResponse.ok) {
-          const errorText = apiResponse.text();
-          console.error("Error response:", errorText);
-          throw new Error(`API responded with status: ${apiResponse.status}`);
+            if (!uploadResponse.ok) {
+              throw new Error(
+                `Upload failed for file ${idx + 1} with status: ${
+                  uploadResponse.status
+                }`
+              );
+            }
+
+            return await uploadResponse.json();
+          });
+
+          uploadData = await Promise.all(uploadPromises);
+          console.log("All files uploaded successfully:", uploadData);
+        } else {
+          // Single file upload (existing logic)
+          const response = await fetch(files[fileIndex]);
+          const blob = await response.blob();
+          console.log("PDF blob retrieved:", blob.size, "bytes");
+
+          const uploadFormData = new FormData();
+          const originalFilename =
+            fileNames[fileIndex] || `file-${fileIndex}.pdf`;
+
+          // Remove .pdf extension from filename for API
+          filenameWithoutExtension = originalFilename.replace(/\.pdf$/i, "");
+
+          uploadFormData.append("pdf", blob, originalFilename);
+
+          console.log("Uploading file to get s3_object_key...");
+          const uploadResponse = await fetch(`${esg_api}/upload`, {
+            method: "POST",
+            mode: "cors",
+            body: uploadFormData,
+          });
+
+          if (!uploadResponse.ok) {
+            throw new Error(
+              `Upload failed with status: ${uploadResponse.status}`
+            );
+          }
+
+          uploadData = await uploadResponse.json();
+          console.log(
+            "Upload successful, s3_object_key:",
+            (uploadData as UploadResponse).s3_object_key
+          );
         }
 
-        const data: ApiResponse = await apiResponse.json();
+        setAnalysisProgress({
+          current: 1,
+          total: 5,
+          currentType: "Starting analysis...",
+        });
 
-        // Calculate response time in seconds
-        const endTime = new Date().getTime();
-        const responseTimeSeconds = (endTime - startTime) / 1000;
-        setResponseTime(responseTimeSeconds);
+        // Step 2: Make 4 separate requests for each GRI type in parallel
+        const griTypes = [
+          "governance",
+          "economic",
+          "social",
+          "environmental",
+        ] as const;
 
-        console.log("API data received:", data);
-        setApiData(data);
+        let totalSpdiIndex = 0;
+        let allIndicators: any[] = [];
+
+        setCurrentGriType(null);
+        setFinishedGriTypes([]);
+        setInProgressGriTypes([]);
+
+        // Set all GRI types as in-progress immediately since they'll run in parallel
+        setInProgressGriTypes([...griTypes]);
+
+        // Helper function to make individual GRI requests with retry logic
+        const makeGriRequest = async (
+          griType: GriType,
+          retryCount = 0
+        ): Promise<{ griType: GriType; griData: GriResponse }> => {
+          const maxRetries = 3;
+          const baseDelay = 2000; // 2 seconds base delay
+
+          try {
+            console.log(
+              `Making request for ${griType}${
+                retryCount > 0 ? ` (retry ${retryCount})` : ""
+              }...`
+            );
+
+            // Determine which endpoint to use based on number of files
+            const isMultiFile = files.length > 1;
+            const endpoint = isMultiFile
+              ? `${esg_api}/evaluate-multi`
+              : `${esg_api}/evaluate`;
+
+            // Prepare payload based on endpoint
+            let evaluatePayload;
+            if (isMultiFile) {
+              // For multi-file, include all file information as separate arrays
+              evaluatePayload = {
+                s3_object_keys: (uploadData as UploadResponse[]).map(
+                  (upload) => upload.s3_object_key
+                ),
+                filenames: files.map((fileUrl, idx) =>
+                  (fileNames[idx] || `file-${idx}.pdf`).replace(/\.pdf$/i, "")
+                ),
+                document_types: files.map(
+                  (fileUrl, idx) => docTypes[idx] || "sustainability_report"
+                ),
+              };
+            } else {
+              // For single file, use existing payload structure
+              evaluatePayload = {
+                s3_object_key: (uploadData as UploadResponse).s3_object_key,
+                filename: filenameWithoutExtension,
+              };
+            }
+
+            // Log the request details
+            console.log(
+              `=== ${
+                isMultiFile ? "/evaluate-multi" : "/evaluate"
+              } Request for ${griType} ===`
+            );
+            console.log("Endpoint:", endpoint);
+            console.log("Payload:", evaluatePayload);
+
+            const evaluateResponse = await fetch(
+              `${endpoint}?gri_type=${griType}&document_type=${
+                docTypes[fileIndex] || "sustainability_report"
+              }`,
+              {
+                method: "POST",
+                mode: "cors",
+                headers: {
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify(evaluatePayload),
+              }
+            );
+
+            console.log(
+              `=== ${
+                isMultiFile ? "/evaluate-multi" : "/evaluate"
+              } Response for ${griType} ===`
+            );
+            console.log("Status:", evaluateResponse.status);
+            console.log("Status Text:", evaluateResponse.statusText);
+            console.log(
+              "Headers:",
+              Object.fromEntries(evaluateResponse.headers.entries())
+            );
+
+            if (!evaluateResponse.ok) {
+              // Log error response body
+              const errorText = await evaluateResponse.text();
+              console.error(`Error response body for ${griType}:`, errorText);
+
+              // Check if this is a retryable error
+              const isRetryableError =
+                evaluateResponse.status === 500 ||
+                evaluateResponse.status === 502 ||
+                evaluateResponse.status === 503 ||
+                evaluateResponse.status === 504 ||
+                errorText.includes("timeout") ||
+                errorText.includes("Read timeout");
+
+              if (isRetryableError && retryCount < maxRetries) {
+                const delay = baseDelay * Math.pow(2, retryCount); // Exponential backoff
+                console.log(
+                  `Retryable error for ${griType}. Retrying in ${delay}ms... (attempt ${
+                    retryCount + 1
+                  }/${maxRetries})`
+                );
+
+                // Wait before retrying
+                await new Promise((resolve) => setTimeout(resolve, delay));
+
+                // Retry the request
+                return makeGriRequest(griType, retryCount + 1);
+              }
+
+              throw new Error(
+                `${griType} evaluation failed with status: ${evaluateResponse.status} - ${errorText}`
+              );
+            }
+
+            const griData: GriResponse = await evaluateResponse.json();
+            console.log(`Response for ${griType}:`, griData);
+            console.log(
+              `${griType} analysis completed${
+                retryCount > 0 ? ` after ${retryCount} retries` : ""
+              }`
+            );
+
+            return { griType, griData };
+          } catch (error) {
+            // Handle network errors or other exceptions
+            if (retryCount < maxRetries) {
+              const delay = baseDelay * Math.pow(2, retryCount);
+              console.log(
+                `Network error for ${griType}. Retrying in ${delay}ms... (attempt ${
+                  retryCount + 1
+                }/${maxRetries})`
+              );
+
+              // Wait before retrying
+              await new Promise((resolve) => setTimeout(resolve, delay));
+
+              // Retry the request
+              return makeGriRequest(griType, retryCount + 1);
+            }
+
+            // If we've exhausted all retries, throw the error
+            throw error;
+          }
+        };
+
+        // Run all GRI requests in parallel and handle results as they complete
+        const promises = griTypes.map(async (griType) => {
+          try {
+            const result = await makeGriRequest(griType);
+
+            // Process result immediately when it completes
+            const { griData } = result;
+
+            // Get document_id from the first response (all responses have the same document_id)
+            if (!documentId && griData.id) {
+              console.log(
+                "Setting documentId from evaluate response:",
+                griData.id
+              );
+              setDocumentId(griData.id);
+            }
+
+            // Update totals immediately
+            totalSpdiIndex += griData.summary.spdi_index ?? 0;
+
+            // Add indicators to the flat list immediately
+            const newIndicators = Object.entries(griData.indicators).map(
+              ([key, value]) => ({
+                index: key,
+                score: value.score,
+                title: value.title,
+                explanation: value.reasoning,
+              })
+            );
+
+            allIndicators.push(...newIndicators);
+
+            // Update state immediately after each response
+            setSpdiIndex(totalSpdiIndex);
+            setAllIndicators([...allIndicators]);
+
+            setFinishedGriTypes((prev) => [...prev, griType]);
+            setInProgressGriTypes((prev) =>
+              prev.filter((type) => type !== griType)
+            );
+
+            return result;
+          } catch (error) {
+            console.error(`Error analyzing ${griType}:`, error);
+            setInProgressGriTypes((prev) =>
+              prev.filter((type) => type !== griType)
+            );
+
+            // Don't throw the error, just return null to indicate failure
+            // This allows other requests to continue
+            return null;
+          }
+        });
+
+        // Wait for all promises to complete (but results are already processed)
+        const results = await Promise.allSettled(promises);
+
+        // Check if any requests failed
+        const failedRequests = results.filter(
+          (result) =>
+            result.status === "rejected" ||
+            (result.status === "fulfilled" && result.value === null)
+        );
+
+        if (failedRequests.length > 0) {
+          console.warn(
+            `${failedRequests.length} GRI analysis requests failed, but continuing with partial results`
+          );
+
+          // Show a warning to the user about partial results
+          if (failedRequests.length === griTypes.length) {
+            // All requests failed
+            throw new Error(
+              "All GRI analysis requests failed. Please try again later."
+            );
+          } else {
+            // Some requests failed, show warning but continue
+            setApiError(
+              `Warning: ${failedRequests.length} out of ${griTypes.length} GRI analyses failed. Showing partial results.`
+            );
+          }
+        }
+
+        setCurrentGriType(null);
+
         setApiLoading(false);
+        setAnalysisProgress(null);
       } catch (err) {
         console.error("API request failed:", err);
         setApiError(
           err instanceof Error ? err.message : "Failed to fetch ESG data"
         );
         setApiLoading(false);
+        setAnalysisProgress(null);
       }
     }
 
@@ -229,6 +535,106 @@ function ResultsContent() {
         }, 50);
       }, 50);
     }
+  };
+
+  // Edit functions
+  const handleEditIndicator = (
+    index: number,
+    currentScore: number,
+    currentExplanation: string
+  ) => {
+    setEditingIndicators((prev) => new Set(prev).add(index));
+    setEditedValues((prev) => ({
+      ...prev,
+      [index]: { score: currentScore, explanation: currentExplanation },
+    }));
+  };
+
+  const handleCancelEdit = (index: number) => {
+    setEditingIndicators((prev) => {
+      const newSet = new Set(prev);
+      newSet.delete(index);
+      return newSet;
+    });
+    setEditedValues((prev) => {
+      const newValues = { ...prev };
+      delete newValues[index];
+      return newValues;
+    });
+  };
+
+  const handleSaveIndicator = async (index: number) => {
+    const editedValue = editedValues[index];
+    if (!editedValue) return;
+
+    if (!documentId) {
+      alert("Document ID not available. Please try again.");
+      return;
+    }
+
+    try {
+      const indicatorCode = allIndicators[index].index;
+
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_ESG_API}/documents/${documentId}/indicator/${indicatorCode}`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            score: editedValue.score,
+            reasoning: editedValue.explanation,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to update indicator: ${response.status}`);
+      }
+
+      const result = await response.json();
+
+      // Update local state
+      setAllIndicators((prev) =>
+        prev.map((indicator, i) =>
+          i === index
+            ? {
+                ...indicator,
+                score: editedValue.score,
+                explanation: editedValue.explanation,
+              }
+            : indicator
+        )
+      );
+
+      // Update SPDI index if provided
+      if (result.updated_spdi_index !== undefined) {
+        setSpdiIndex(result.updated_spdi_index);
+      }
+
+      // Exit edit mode
+      handleCancelEdit(index);
+
+      console.log("Indicator updated successfully:", result);
+    } catch (error) {
+      console.error("Error updating indicator:", error);
+      alert("Failed to update indicator. Please try again.");
+    }
+  };
+
+  const handleScoreChange = (index: number, newScore: number) => {
+    setEditedValues((prev) => ({
+      ...prev,
+      [index]: { ...prev[index], score: newScore },
+    }));
+  };
+
+  const handleExplanationChange = (index: number, newExplanation: string) => {
+    setEditedValues((prev) => ({
+      ...prev,
+      [index]: { ...prev[index], explanation: newExplanation },
+    }));
   };
 
   return (
@@ -280,55 +686,59 @@ function ResultsContent() {
           ESG Analysis Results
         </h2>
 
-        {/* Add token usage and response time info */}
-        {!apiLoading && !apiError && apiData && (
+        {/* GRI Analysis Status */}
+        {apiLoading && (
+          <div className="p-4 bg-gray-800 border-b border-gray-700">
+            <h3 className="text-md font-semibold text-gray-300 mb-3">
+              Analysis Progress
+            </h3>
+            <div className="grid grid-cols-2 gap-3">
+              {griTypes.map((griType) => {
+                let colorClass = "bg-gray-600";
+                if (finishedGriTypes.includes(griType)) {
+                  colorClass = "bg-green-500";
+                } else if (inProgressGriTypes.includes(griType)) {
+                  colorClass = "bg-blue-500 animate-pulse";
+                }
+                return (
+                  <div key={griType} className="flex items-center space-x-2">
+                    <div className={`w-3 h-3 rounded-full ${colorClass}`}></div>
+                    <span
+                      className={`text-sm ${
+                        finishedGriTypes.includes(griType)
+                          ? "text-green-400"
+                          : inProgressGriTypes.includes(griType)
+                          ? "text-blue-400"
+                          : "text-gray-500"
+                      }`}
+                    >
+                      {griType.charAt(0).toUpperCase() + griType.slice(1)}
+                      {finishedGriTypes.includes(griType) && " ✓"}
+                      {inProgressGriTypes.includes(griType) && " ..."}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Add response time info */}
+        {allIndicators.length > 0 && inProgressGriTypes.length === 0 && (
           <div className="p-4 bg-gray-800 border-b border-gray-700">
             <div className="flex justify-between items-center mb-2">
               <h3 className="text-md font-semibold text-gray-300">
                 Analysis Summary
               </h3>
-              {responseTime && (
-                <span className="text-sm text-gray-400">
-                  Response time: {responseTime.toFixed(2)}s
-                </span>
-              )}
             </div>
 
-            <div className="grid grid-cols-4 gap-2 mt-3">
+            <div className="grid grid-cols-1 gap-2 mt-3">
               <div className="bg-gray-700 p-2 rounded-md">
-                <div className="flex items-center">
-                  <p className="text-sm text-gray-400">Total tokens used</p>
-                  <div className="relative ml-1">
-                    <span
-                      className="text-gray-500 text-xs cursor-help"
-                      onMouseEnter={() => setShowTooltip(true)}
-                      onMouseLeave={() => setShowTooltip(false)}
-                    >
-                      ⓘ
-                    </span>
-                    {/* Tooltip */}
-                    {showTooltip && (
-                      <div
-                        className="absolute bg-gray-800 text-xs text-gray-300 p-2 rounded shadow-lg 
-                        w-48 left-0 top-full mt-1 z-10"
-                      >
-                        The total token count is the sum of input (prompt)
-                        tokens and output (response) tokens used during the
-                        analysis.
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <p className="text-md font-bold text-blue-400">
-                  {apiData.token_usage?.total_tokens_used?.toLocaleString() ||
-                    "N/A"}
+                <p className="text-sm text-gray-400">
+                  SPDI Index Score out of 33 Index
                 </p>
-              </div>
-
-              <div className="bg-gray-700 p-2 rounded-md">
-                <p className="text-sm text-gray-400">SPDI Index Score</p>
                 <p className="text-md font-bold text-green-400">
-                  {apiData.summary?.spdi_index || "N/A"}
+                  {spdiIndex || "N/A"}
                 </p>
               </div>
             </div>
@@ -336,13 +746,47 @@ function ResultsContent() {
         )}
 
         <div className="flex-1 overflow-y-auto p-4">
-          {apiLoading ? (
-            <p className="text-center py-8">Loading ESG analysis results...</p>
+          {apiLoading && allIndicators.length === 0 ? (
+            <div className="text-center py-8">
+              {analysisProgress ? (
+                <div className="space-y-4">
+                  <p className="text-lg font-semibold text-white">
+                    {analysisProgress.currentType}
+                  </p>
+                  <div className="w-full bg-gray-700 rounded-full h-2">
+                    <div
+                      className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                      style={{
+                        width: `${
+                          (analysisProgress.current / analysisProgress.total) *
+                          100
+                        }%`,
+                      }}
+                    ></div>
+                  </div>
+                  <p className="text-sm text-gray-400">
+                    Step {analysisProgress.current} of {analysisProgress.total}
+                  </p>
+                </div>
+              ) : (
+                <p>Loading ESG analysis results...</p>
+              )}
+            </div>
           ) : apiError ? (
             <p className="text-red-500 text-center py-8">{apiError}</p>
-          ) : esgResults.length > 0 ? (
+          ) : allIndicators.length > 0 ? (
             <div className="space-y-6">
-              {esgResults.map((result, index) => (
+              {/* Show partial results notice if still loading */}
+              {apiLoading && (
+                <div className="bg-blue-900/30 border border-blue-700 rounded-lg p-3 mb-4">
+                  <p className="text-blue-300 text-sm">
+                    ⚡ Showing partial results while remaining analyses
+                    complete...
+                  </p>
+                </div>
+              )}
+
+              {allIndicators.map((result, index) => (
                 <div
                   key={index}
                   className="bg-gray-800 p-6 rounded-lg shadow-md"
@@ -351,39 +795,103 @@ function ResultsContent() {
                     <h3 className="text-lg font-semibold text-white">
                       {result.index}
                     </h3>
-                    <p className="text-2xl font-bold text-green-400">
-                      {result.score}
-                    </p>
+                    <div className="flex items-center space-x-2">
+                      {editingIndicators.has(index) ? (
+                        <>
+                          <input
+                            type="number"
+                            min="0"
+                            max="4"
+                            value={editedValues[index]?.score ?? result.score}
+                            onChange={(e) =>
+                              handleScoreChange(
+                                index,
+                                parseInt(e.target.value) || 0
+                              )
+                            }
+                            className="w-16 bg-gray-700 text-white px-2 py-1 rounded text-center"
+                          />
+                          <span className="text-gray-400">/ 4</span>
+                        </>
+                      ) : (
+                        <p
+                          className={`text-lg font-bold ${
+                            result.score < 2
+                              ? "text-red-400"
+                              : result.score == 2
+                              ? "text-blue-400"
+                              : "text-green-400"
+                          }`}
+                        >
+                          Score: {result.score} / 4
+                        </p>
+                      )}
+
+                      {/* Edit/Save buttons - only show when all requests finished */}
+                      {(() => {
+                        console.log("Edit button condition check:", {
+                          inProgressGriTypesLength: inProgressGriTypes.length,
+                          documentId: documentId,
+                          shouldShow:
+                            inProgressGriTypes.length === 0 && documentId,
+                        });
+                        return (
+                          inProgressGriTypes.length === 0 &&
+                          documentId &&
+                          (editingIndicators.has(index) ? (
+                            <div className="flex space-x-2">
+                              <button
+                                onClick={() => handleSaveIndicator(index)}
+                                className="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-sm transition"
+                              >
+                                Save
+                              </button>
+                              <button
+                                onClick={() => handleCancelEdit(index)}
+                                className="bg-gray-600 hover:bg-gray-700 text-white px-3 py-1 rounded text-sm transition"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() =>
+                                handleEditIndicator(
+                                  index,
+                                  result.score,
+                                  result.explanation
+                                )
+                              }
+                              className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm transition"
+                            >
+                              Edit
+                            </button>
+                          ))
+                        );
+                      })()}
+                    </div>
                   </div>
                   <div>
                     <h4 className="text-md font-semibold text-gray-300 mb-2">
                       Explanation
                     </h4>
-                    <p className="text-sm text-gray-400 leading-relaxed">
-                      {result.explanation}
-                    </p>
-                  </div>
-
-                  {/* Add token usage for each indicator */}
-                  {apiData?.token_usage?.by_indicator?.[result.index] && (
-                    <div className="mt-4 pt-3 border-t border-gray-700">
-                      <p className="text-xs text-gray-500">
-                        Tokens:{" "}
-                        {apiData.token_usage.by_indicator[
-                          result.index
-                        ].total_tokens.toLocaleString()}
-                        (Prompt:{" "}
-                        {apiData.token_usage.by_indicator[
-                          result.index
-                        ].prompt_tokens.toLocaleString()}
-                        , Response:{" "}
-                        {apiData.token_usage.by_indicator[
-                          result.index
-                        ].response_tokens.toLocaleString()}
-                        )
+                    {editingIndicators.has(index) ? (
+                      <textarea
+                        value={
+                          editedValues[index]?.explanation ?? result.explanation
+                        }
+                        onChange={(e) =>
+                          handleExplanationChange(index, e.target.value)
+                        }
+                        className="w-full bg-gray-700 text-white p-3 rounded border border-gray-600 focus:border-blue-500 focus:outline-none resize-vertical min-h-24"
+                        rows={4}
+                      />
+                    ) : (
+                      <p className="text-sm text-gray-400 leading-relaxed">
+                        {result.explanation}
                       </p>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
