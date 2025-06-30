@@ -6,7 +6,6 @@ import {
   Calendar,
   ChevronLeft,
   ChevronRight,
-  Clock,
   Download,
   SlidersHorizontal,
   ArrowDownAZ,

@@ -2,8 +2,8 @@ import { redirect } from "next/navigation";
 import { checkRole } from "@app-utils/roles";
 import { SearchUsers } from "./SearchUsers";
 import { clerkClient } from "@clerk/nextjs/server";
-import { removeRole, setRole } from "./_actions";
-import { Shield, UserCheck, UserCog, UserMinus } from "lucide-react";
+import { setRole } from "./_actions";
+import { Shield, UserCheck, UserCog} from "lucide-react";
 
 export default async function AdminDashboard(params: {
   searchParams: Promise<{ search?: string }>;
@@ -16,7 +16,7 @@ export default async function AdminDashboard(params: {
   const query = (await params.searchParams).search;
 
   const client = await clerkClient();
-  const { data, totalCount } = query
+  const { data } = query
     ? await client.users.getUserList({ query })
     : await client.users.getUserList({
         orderBy: "-created_at",

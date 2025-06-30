@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Upload, Trash2, FileText } from "lucide-react";
 
@@ -60,7 +60,7 @@ export default function UploadPage() {
     // Create URL params including both file URLs, document types, and original filenames
     const params = new URLSearchParams();
 
-    files.forEach((fileWithType, index) => {
+    files.forEach((fileWithType) => {
       const url = URL.createObjectURL(fileWithType.file);
       params.append("files", url);
       params.append("docTypes", fileWithType.documentType);

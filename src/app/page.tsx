@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { SignedIn, SignedOut, SignUpButton, useAuth } from "@clerk/nextjs";
+import { SignedOut, SignUpButton, useAuth } from "@clerk/nextjs";
 
 export default function LandingPage() {
   const router = useRouter();

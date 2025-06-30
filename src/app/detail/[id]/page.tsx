@@ -8,14 +8,11 @@ import {
   File,
   Calendar,
   FileText,
-  HelpCircle,
-  Filter,
   Grid,
   List,
   Tag,
   Type,
 } from "lucide-react";
-import Link from "next/link";
 
 interface DocumentDetail {
   id: string;
