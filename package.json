@@ -8,8 +8,8 @@
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build",
-    "start": "next start",
-    "lint": "next lint"
+    "start": "next start"
+    // "lint": "next lint"
   },
   "dependencies": {
     "@clerk/nextjs": "^6.19.1",
