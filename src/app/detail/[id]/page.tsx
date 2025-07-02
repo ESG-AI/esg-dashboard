@@ -14,6 +14,9 @@ import {
   List,
   Tag,
   Type,
+  Edit3,
+  Save,
+  X,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -43,6 +46,12 @@ export default function DocumentDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [activeCategory, setActiveCategory] = useState<string>("all");
   const [viewMode, setViewMode] = useState<"card" | "table">("card");
+  const [editingIndicators, setEditingIndicators] = useState<Set<string>>(
+    new Set()
+  );
+  const [editedValues, setEditedValues] = useState<{
+    [key: string]: { score: number; reasoning: string };
+  }>({});
 
   useEffect(() => {
     async function fetchDocumentDetails() {
@@ -163,6 +172,95 @@ export default function DocumentDetailPage() {
 
   const categoryCounts = getCategories();
   const filteredIndicators = getFilteredIndicators();
+
+  // Edit functions
+  const handleEditIndicator = (
+    indicatorKey: string,
+    currentScore: number,
+    currentReasoning: string
+  ) => {
+    setEditingIndicators((prev) => new Set(prev).add(indicatorKey));
+    setEditedValues((prev) => ({
+      ...prev,
+      [indicatorKey]: { score: currentScore, reasoning: currentReasoning },
+    }));
+  };
+
+  const handleCancelEdit = (indicatorKey: string) => {
+    setEditingIndicators((prev) => {
+      const newSet = new Set(prev);
+      newSet.delete(indicatorKey);
+      return newSet;
+    });
+    setEditedValues((prev) => {
+      const newValues = { ...prev };
+      delete newValues[indicatorKey];
+      return newValues;
+    });
+  };
+
+  const handleSaveIndicator = async (indicatorKey: string) => {
+    if (!document) return;
+    const editedValue = editedValues[indicatorKey];
+    if (!editedValue) return;
+    try {
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_ESG_API}/documents/${document.id}/indicator/${indicatorKey}`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            score: editedValue.score,
+            reasoning: editedValue.reasoning,
+          }),
+        }
+      );
+      if (!response.ok) {
+        throw new Error(`Failed to update indicator: ${response.status}`);
+      }
+      const result = await response.json();
+      // Update local state
+      setDocument((prev) =>
+        prev
+          ? {
+              ...prev,
+              indicators: {
+                ...prev.indicators,
+                [indicatorKey]: {
+                  ...prev.indicators[indicatorKey],
+                  score: editedValue.score,
+                  reasoning: editedValue.reasoning,
+                },
+              },
+              spdiIndex: result.updated_spdi_index ?? prev.spdiIndex,
+            }
+          : prev
+      );
+      handleCancelEdit(indicatorKey);
+    } catch (error) {
+      console.error("Error updating indicator:", error);
+      alert("Failed to update indicator. Please try again.");
+    }
+  };
+
+  const handleScoreChange = (indicatorKey: string, newScore: number) => {
+    setEditedValues((prev) => ({
+      ...prev,
+      [indicatorKey]: { ...prev[indicatorKey], score: newScore },
+    }));
+  };
+
+  const handleReasoningChange = (
+    indicatorKey: string,
+    newReasoning: string
+  ) => {
+    setEditedValues((prev) => ({
+      ...prev,
+      [indicatorKey]: { ...prev[indicatorKey], reasoning: newReasoning },
+    }));
+  };
 
   return (
     <div className="flex flex-col min-h-screen bg-gradient-to-b from-gray-900 via-gray-800 to-gray-900 text-gray-200 p-4 md:p-6">
@@ -334,15 +432,62 @@ export default function DocumentDetailPage() {
                       <h3 className="font-medium text-white text-lg">{key}</h3>
                       <p className="text-sm text-gray-300">{indicator.title}</p>
                     </div>
-                    <span
-                      className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${getScoreColorClass(
-                        indicator.score
-                      )}`}
-                    >
-                      {indicator.score}
-                    </span>
+                    {editingIndicators.has(key) ? (
+                      <div className="flex items-center space-x-2">
+                        <input
+                          type="number"
+                          min="0"
+                          max="4"
+                          value={editedValues[key]?.score ?? indicator.score}
+                          onChange={(e) =>
+                            handleScoreChange(
+                              key,
+                              parseInt(e.target.value) || 0
+                            )
+                          }
+                          className="w-16 bg-gray-700 text-white px-2 py-1 rounded text-center"
+                        />
+                        <span className="text-gray-400">/ 4</span>
+                        <button
+                          onClick={() => handleSaveIndicator(key)}
+                          className="bg-green-600 hover:bg-green-700 text-white px-2 py-1 rounded"
+                          title="Save"
+                        >
+                          <Save size={16} />
+                        </button>
+                        <button
+                          onClick={() => handleCancelEdit(key)}
+                          className="bg-gray-600 hover:bg-gray-700 text-white px-2 py-1 rounded"
+                          title="Cancel"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center space-x-2">
+                        <span
+                          className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${getScoreColorClass(
+                            indicator.score
+                          )}`}
+                        >
+                          {indicator.score}
+                        </span>
+                        <button
+                          onClick={() =>
+                            handleEditIndicator(
+                              key,
+                              indicator.score,
+                              indicator.reasoning
+                            )
+                          }
+                          className="bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded"
+                          title="Edit"
+                        >
+                          <Edit3 size={16} />
+                        </button>
+                      </div>
+                    )}
                   </div>
-
                   <div className="grid grid-cols-2 gap-4 mb-4">
                     <div className="bg-gray-750/50 p-2 rounded">
                       <h4 className="text-xs text-gray-400">Type</h4>
@@ -353,19 +498,30 @@ export default function DocumentDetailPage() {
                       <p className="text-sm capitalize">{indicator.subtype}</p>
                     </div>
                   </div>
-
                   <div className="mb-3">
                     <h4 className="text-xs text-gray-400 mb-1">Description</h4>
                     <p className="text-sm text-gray-300 bg-gray-750/30 p-2 rounded">
                       {indicator.description}
                     </p>
                   </div>
-
                   <div>
                     <h4 className="text-xs text-gray-400 mb-1">Reasoning</h4>
-                    <p className="text-sm text-gray-300 bg-gray-750/30 p-2 rounded">
-                      {indicator.reasoning}
-                    </p>
+                    {editingIndicators.has(key) ? (
+                      <textarea
+                        value={
+                          editedValues[key]?.reasoning ?? indicator.reasoning
+                        }
+                        onChange={(e) =>
+                          handleReasoningChange(key, e.target.value)
+                        }
+                        className="w-full bg-gray-700 text-white p-3 rounded border border-gray-600 focus:border-blue-500 focus:outline-none resize-vertical min-h-24"
+                        rows={4}
+                      />
+                    ) : (
+                      <p className="text-sm text-gray-300 bg-gray-750/30 p-2 rounded">
+                        {indicator.reasoning}
+                      </p>
+                    )}
                   </div>
                 </div>
               ))}
@@ -390,6 +546,12 @@ export default function DocumentDetailPage() {
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
                       Description
                     </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                      Reasoning
+                    </th>
+                    <th className="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">
+                      Actions
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-700">
@@ -404,13 +566,29 @@ export default function DocumentDetailPage() {
                         </div>
                       </td>
                       <td className="px-4 py-4 text-center">
-                        <span
-                          className={`inline-flex items-center justify-center px-3 py-1 rounded-full text-sm font-medium ${getScoreColorClass(
-                            indicator.score
-                          )}`}
-                        >
-                          {indicator.score}
-                        </span>
+                        {editingIndicators.has(key) ? (
+                          <input
+                            type="number"
+                            min="0"
+                            max="4"
+                            value={editedValues[key]?.score ?? indicator.score}
+                            onChange={(e) =>
+                              handleScoreChange(
+                                key,
+                                parseInt(e.target.value) || 0
+                              )
+                            }
+                            className="w-16 bg-gray-700 text-white px-2 py-1 rounded text-center"
+                          />
+                        ) : (
+                          <span
+                            className={`inline-flex items-center justify-center px-3 py-1 rounded-full text-sm font-medium ${getScoreColorClass(
+                              indicator.score
+                            )}`}
+                          >
+                            {indicator.score}
+                          </span>
+                        )}
                       </td>
                       <td className="px-4 py-4 text-sm capitalize">
                         {indicator.type}
@@ -423,13 +601,58 @@ export default function DocumentDetailPage() {
                           <div className="truncate">
                             {indicator.description}
                           </div>
-                          <button
-                            onClick={() => alert(indicator.reasoning)}
-                            className="text-blue-400 hover:text-blue-300 text-xs mt-1"
-                          >
-                            View reasoning
-                          </button>
                         </div>
+                      </td>
+                      <td className="px-4 py-4 text-sm text-gray-300">
+                        {editingIndicators.has(key) ? (
+                          <textarea
+                            value={
+                              editedValues[key]?.reasoning ??
+                              indicator.reasoning
+                            }
+                            onChange={(e) =>
+                              handleReasoningChange(key, e.target.value)
+                            }
+                            className="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-blue-500 focus:outline-none resize-vertical min-h-12"
+                            rows={2}
+                          />
+                        ) : (
+                          <div className="truncate">{indicator.reasoning}</div>
+                        )}
+                      </td>
+                      <td className="px-4 py-4 text-center">
+                        {editingIndicators.has(key) ? (
+                          <div className="flex space-x-2 justify-center">
+                            <button
+                              onClick={() => handleSaveIndicator(key)}
+                              className="bg-green-600 hover:bg-green-700 text-white px-2 py-1 rounded"
+                              title="Save"
+                            >
+                              <Save size={16} />
+                            </button>
+                            <button
+                              onClick={() => handleCancelEdit(key)}
+                              className="bg-gray-600 hover:bg-gray-700 text-white px-2 py-1 rounded"
+                              title="Cancel"
+                            >
+                              <X size={16} />
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() =>
+                              handleEditIndicator(
+                                key,
+                                indicator.score,
+                                indicator.reasoning
+                              )
+                            }
+                            className="bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded"
+                            title="Edit"
+                          >
+                            <Edit3 size={16} />
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
