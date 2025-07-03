@@ -683,7 +683,7 @@ function ResultsContent() {
       {/* Right: Analysis Results */}
       <div className="w-1/2 ml-4 bg-gray-900 rounded-lg flex flex-col h-full">
         <h2 className="text-xl font-bold p-4 border-b border-gray-700">
-          ESG Analysis Results
+          SPDI Analysis Results
         </h2>
 
         {/* GRI Analysis Status */}
@@ -735,7 +735,7 @@ function ResultsContent() {
             <div className="grid grid-cols-1 gap-2 mt-3">
               <div className="bg-gray-700 p-2 rounded-md">
                 <p className="text-sm text-gray-400">
-                  SPDI Index Score out of 33 Index
+                  SPDI Index Score out of 33 Indicators
                 </p>
                 <p className="text-md font-bold text-green-400">
                   {spdiIndex || "N/A"}
@@ -769,7 +769,7 @@ function ResultsContent() {
                   </p>
                 </div>
               ) : (
-                <p>Loading ESG analysis results...</p>
+                <p>Loading SPDI analysis results...</p>
               )}
             </div>
           ) : apiError ? (
