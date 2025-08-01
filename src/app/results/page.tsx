@@ -76,6 +76,17 @@ const griTypes: GriType[] = [
   "environmental",
 ];
 
+// Define the indicator type
+interface Indicator {
+  index: string;
+  score: number;
+  title: string;
+  explanation: string;
+  type: string;
+  sub_type: string;
+  description: string;
+}
+
 function ResultsContent() {
   const searchParams = useSearchParams();
   const fileUrls = searchParams.getAll("files");
@@ -96,7 +107,7 @@ function ResultsContent() {
   } | null>(null);
 
   // New state for progressive loading
-  const [allIndicators, setAllIndicators] = useState<any[]>([]);
+  const [allIndicators, setAllIndicators] = useState<Indicator[]>([]);
   const [spdiIndex, setSpdiIndex] = useState<number>(0);
 
   // At the top of ResultsContent
@@ -424,6 +435,9 @@ function ResultsContent() {
                 score: value.score,
                 title: value.title,
                 explanation: value.reasoning,
+                type: value.type,
+                sub_type: value.sub_type,
+                description: value.description,
               })
             );
 
@@ -508,6 +522,53 @@ function ResultsContent() {
         explanation: value.reasoning,
       }))
     : [];
+
+  // Group indicators by type for display
+  const groupedIndicators = allIndicators.reduce((acc, indicator) => {
+    const type = indicator.type || "other";
+    if (!acc[type]) {
+      acc[type] = [];
+    }
+    acc[type].push(indicator);
+    return acc;
+  }, {} as Record<string, Indicator[]>);
+
+  // Get type display names and colors
+  const getTypeDisplayName = (type: string) => {
+    const typeNames: Record<string, string> = {
+      governance: "Governance",
+      economic: "Economic",
+      social: "Social",
+      environmental: "Environmental",
+      other: "Other",
+    };
+    return typeNames[type] || type.charAt(0).toUpperCase() + type.slice(1);
+  };
+
+  const getTypeColor = (type: string) => {
+    const typeColors: Record<string, string> = {
+      governance: "border-purple-500",
+      economic: "border-yellow-500",
+      social: "border-blue-500",
+      environmental: "border-emerald-500",
+      other: "border-gray-500",
+    };
+    return typeColors[type] || "border-gray-500";
+  };
+
+  // Sort grouped indicators by the standard GRI order
+  const sortedGroupedIndicators = Object.entries(groupedIndicators).sort(
+    ([a], [b]) => {
+      const order = [
+        "governance",
+        "economic",
+        "social",
+        "environmental",
+        "other",
+      ];
+      return order.indexOf(a) - order.indexOf(b);
+    }
+  );
 
   const handleNextFile = () => {
     if (fileIndex < files.length - 1) {
@@ -785,113 +846,147 @@ function ResultsContent() {
                   </p>
                 </div>
               )}
+              <div></div>
+              {sortedGroupedIndicators.map(([type, indicators]) => (
+                <div key={type} className="space-y-4">
+                  {/* GRI Type Header */}
+                  <div
+                    className={`bg-gray-700 p-4 rounded-lg border-l-4 ${getTypeColor(
+                      type
+                    )}`}
+                  >
+                    <h2 className="text-xl font-bold text-white">
+                      {getTypeDisplayName(type)} Indicators
+                    </h2>
+                  </div>
 
-              {allIndicators.map((result, index) => (
-                <div
-                  key={index}
-                  className="bg-gray-800 p-6 rounded-lg shadow-md"
-                >
-                  <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-lg font-semibold text-white">
-                      {result.index}
-                    </h3>
-                    <div className="flex items-center space-x-2">
-                      {editingIndicators.has(index) ? (
-                        <>
-                          <input
-                            type="number"
-                            min="0"
-                            max="4"
-                            value={editedValues[index]?.score ?? result.score}
-                            onChange={(e) =>
-                              handleScoreChange(
-                                index,
-                                parseInt(e.target.value) || 0
-                              )
-                            }
-                            className="w-16 bg-gray-700 text-white px-2 py-1 rounded text-center"
-                          />
-                          <span className="text-gray-400">/ 4</span>
-                        </>
-                      ) : (
-                        <p
-                          className={`text-lg font-bold ${
-                            result.score < 2
-                              ? "text-red-400"
-                              : result.score == 2
-                              ? "text-blue-400"
-                              : "text-green-400"
-                          }`}
-                        >
-                          Score: {result.score} / 4
-                        </p>
-                      )}
+                  {/* Indicators for this type */}
+                  {indicators.map((result, index: number) => {
+                    // Calculate the global index for this indicator
+                    const globalIndex = allIndicators.findIndex(
+                      (ind) => ind.index === result.index
+                    );
+                    return (
+                      <div
+                        key={result.index}
+                        className="bg-gray-800 p-6 rounded-lg shadow-md ml-4"
+                      >
+                        <div className="flex justify-between items-center mb-4">
+                          <h3 className="text-lg font-semibold text-white">
+                            {result.index}
+                          </h3>
+                          <div className="flex items-center space-x-2">
+                            {editingIndicators.has(globalIndex) ? (
+                              <>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="4"
+                                  value={
+                                    editedValues[globalIndex]?.score ??
+                                    result.score
+                                  }
+                                  onChange={(e) =>
+                                    handleScoreChange(
+                                      globalIndex,
+                                      parseInt(e.target.value) || 0
+                                    )
+                                  }
+                                  className="w-16 bg-gray-700 text-white px-2 py-1 rounded text-center"
+                                />
+                                <span className="text-gray-400">/ 4</span>
+                              </>
+                            ) : (
+                              <p
+                                className={`text-lg font-bold ${
+                                  result.score < 2
+                                    ? "text-red-400"
+                                    : result.score == 2
+                                    ? "text-blue-400"
+                                    : "text-green-400"
+                                }`}
+                              >
+                                Score: {result.score} / 4
+                              </p>
+                            )}
 
-                      {/* Edit/Save buttons - only show when all requests finished */}
-                      {(() => {
-                        console.log("Edit button condition check:", {
-                          inProgressGriTypesLength: inProgressGriTypes.length,
-                          documentId: documentId,
-                          shouldShow:
-                            inProgressGriTypes.length === 0 && documentId,
-                        });
-                        return (
-                          inProgressGriTypes.length === 0 &&
-                          documentId &&
-                          (editingIndicators.has(index) ? (
-                            <div className="flex space-x-2">
-                              <button
-                                onClick={() => handleSaveIndicator(index)}
-                                className="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-sm transition"
-                              >
-                                Save
-                              </button>
-                              <button
-                                onClick={() => handleCancelEdit(index)}
-                                className="bg-gray-600 hover:bg-gray-700 text-white px-3 py-1 rounded text-sm transition"
-                              >
-                                Cancel
-                              </button>
-                            </div>
-                          ) : (
-                            <button
-                              onClick={() =>
-                                handleEditIndicator(
-                                  index,
-                                  result.score,
-                                  result.explanation
+                            {/* Edit/Save buttons - only show when all requests finished */}
+                            {(() => {
+                              console.log("Edit button condition check:", {
+                                inProgressGriTypesLength:
+                                  inProgressGriTypes.length,
+                                documentId: documentId,
+                                shouldShow:
+                                  inProgressGriTypes.length === 0 && documentId,
+                              });
+                              return (
+                                inProgressGriTypes.length === 0 &&
+                                documentId &&
+                                (editingIndicators.has(globalIndex) ? (
+                                  <div className="flex space-x-2">
+                                    <button
+                                      onClick={() =>
+                                        handleSaveIndicator(globalIndex)
+                                      }
+                                      className="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-sm transition"
+                                    >
+                                      Save
+                                    </button>
+                                    <button
+                                      onClick={() =>
+                                        handleCancelEdit(globalIndex)
+                                      }
+                                      className="bg-gray-600 hover:bg-gray-700 text-white px-3 py-1 rounded text-sm transition"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    onClick={() =>
+                                      handleEditIndicator(
+                                        globalIndex,
+                                        result.score,
+                                        result.explanation
+                                      )
+                                    }
+                                    className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm transition"
+                                  >
+                                    Edit
+                                  </button>
+                                ))
+                              );
+                            })()}
+                          </div>
+                        </div>
+                        <div>
+                          <h4 className="text-md font-semibold text-gray-300 mb-2">
+                            Explanation
+                          </h4>
+                          {editingIndicators.has(globalIndex) ? (
+                            <textarea
+                              value={
+                                editedValues[globalIndex]?.explanation ??
+                                result.explanation
+                              }
+                              onChange={(e) =>
+                                handleExplanationChange(
+                                  globalIndex,
+                                  e.target.value
                                 )
                               }
-                              className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm transition"
-                            >
-                              Edit
-                            </button>
-                          ))
-                        );
-                      })()}
-                    </div>
-                  </div>
-                  <div>
-                    <h4 className="text-md font-semibold text-gray-300 mb-2">
-                      Explanation
-                    </h4>
-                    {editingIndicators.has(index) ? (
-                      <textarea
-                        value={
-                          editedValues[index]?.explanation ?? result.explanation
-                        }
-                        onChange={(e) =>
-                          handleExplanationChange(index, e.target.value)
-                        }
-                        className="w-full bg-gray-700 text-white p-3 rounded border border-gray-600 focus:border-blue-500 focus:outline-none resize-vertical min-h-24"
-                        rows={4}
-                      />
-                    ) : (
-                      <p className="text-sm text-gray-400 leading-relaxed">
-                        {result.explanation}
-                      </p>
-                    )}
-                  </div>
+                              className="w-full bg-gray-700 text-white p-3 rounded border border-gray-600 focus:border-blue-500 focus:outline-none resize-vertical min-h-24"
+                              rows={4}
+                            />
+                          ) : (
+                            <p className="text-sm text-gray-400 leading-relaxed">
+                              {result.explanation}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               ))}
             </div>
