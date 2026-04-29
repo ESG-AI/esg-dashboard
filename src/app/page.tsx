@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { SignedIn, SignedOut, SignUpButton, useAuth } from "@clerk/nextjs";
+import { SignUpButton, useAuth } from "@clerk/nextjs";
 
 export default function LandingPage() {
   const router = useRouter();
@@ -34,8 +34,7 @@ export default function LandingPage() {
           Upload your company's Sustainability Report in PDF format, and let our
           AI analyze it to provide a comprehensive SPDI score.
         </p>
-        <SignedOut>
-          {/* Get Started Button for Signed-Out Users */}
+        {!isSignedIn && (
           <SignUpButton
             appearance={{
               elements: {
@@ -48,7 +47,8 @@ export default function LandingPage() {
               Get Started
             </button>
           </SignUpButton>
-        </SignedOut>
+        )}
+        
       </main>
 
       {/* Footer Section */}

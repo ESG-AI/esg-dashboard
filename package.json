@@ -11,12 +11,12 @@
     "start": "next start"
   },
   "dependencies": {
-    "@clerk/nextjs": "^6.19.1",
+    "@clerk/nextjs": "^7.2.7",
     "@react-pdf-viewer/core": "^3.12.0",
     "@vercel/postgres": "^0.10.0",
     "dotenv": "^16.5.0",
     "lucide-react": "^0.479.0",
-    "next": "15.2.4",
+    "next": "^15.5.15",
     "pdfjs-dist": "^3.4.120",
     "pg": "^8.16.0",
     "react": "19.1.0",

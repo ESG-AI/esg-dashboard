@@ -1,26 +1,21 @@
 "use client";
 
-import {
-  SignInButton,
-  SignUpButton,
-  SignedIn,
-  SignedOut,
-  UserButton,
-} from "@clerk/nextjs";
+import { SignInButton, SignUpButton, UserButton, useAuth } from "@clerk/nextjs";
 import Link from "next/link";
 import { Clock } from "lucide-react";
 import { AdminButton } from "@/components/AdminButton";
 
 export const Header = () => {
+  const { isSignedIn } = useAuth();
+
   return (
     <nav className="flex justify-between items-center p-4 h-16 bg-gray-800 shadow-md">
       <Link href="/upload" className="hover:opacity-80 transition-opacity">
         <h1 className="text-xl font-bold text-white cursor-pointer">SPDI AI</h1>
       </Link>
       <div>
-        <SignedOut>
+        {!isSignedIn && (
           <div className="flex items-center gap-4">
-            {/* Custom Sign In Button */}
             <SignInButton
               appearance={{
                 elements: {
@@ -48,9 +43,9 @@ export const Header = () => {
               </button>
             </SignUpButton>
           </div>
-        </SignedOut>
+        )}
 
-        <SignedIn>
+        {isSignedIn && (
           <div className="flex items-center gap-4">
             <UserButton />
             <Link
@@ -62,7 +57,7 @@ export const Header = () => {
             </Link>
             <AdminButton />
           </div>
-        </SignedIn>
+        )}
       </div>
     </nav>
   );
