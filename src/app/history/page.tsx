@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useAuth, useUser } from "@clerk/nextjs";
 import {
   Calendar,
   ChevronLeft,
@@ -80,6 +81,10 @@ export default function HistoryPage() {
   });
   const [showFilters, setShowFilters] = useState(false);
 
+  const { userId } = useAuth();
+  const { user } = useUser();
+  const isAdmin = user?.publicMetadata?.role === "admin";
+
   // Edit state for indicators
   const [editingIndicators, setEditingIndicators] = useState<Set<string>>(
     new Set()
@@ -109,6 +114,11 @@ export default function HistoryPage() {
         params.append("maxScore", filterOptions.scoreRange.max.toString());
         params.append("sortBy", filterOptions.sortBy);
         params.append("sortOrder", filterOptions.sortOrder);
+        
+        // Pass user_id if not an admin
+        if (!isAdmin && userId) {
+            params.append("user_id", userId);
+        }
 
         const response = await fetch(
           `${process.env.NEXT_PUBLIC_ESG_API}/documents?${params.toString()}`
@@ -140,8 +150,10 @@ export default function HistoryPage() {
       }
     }
 
-    fetchDocuments();
-  }, [page, filterOptions]);
+    if (userId) {
+      fetchDocuments();
+    }
+  }, [page, filterOptions, userId, isAdmin]);
 
   const handleFilterChange = (newFilters: Partial<FilterOptions>) => {
     setFilterOptions((prev) => ({ ...prev, ...newFilters }));

@@ -3,6 +3,7 @@
 import { useEffect, useState, Suspense, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import { useJobs } from "@/context/JobContext";
 
 // Type definitions for the new API flow
 interface UploadResponse {
@@ -96,6 +97,7 @@ function ResultsContent() {
   const [files, setFiles] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { pendingJobs, setPendingJobs } = useJobs();
   const [showPdf, setShowPdf] = useState(true);
   const [apiData, setApiData] = useState<ApiResponse | null>(null);
   const [apiLoading, setApiLoading] = useState(true);
@@ -123,10 +125,11 @@ function ResultsContent() {
     [key: number]: { score: number; explanation: string };
   }>({});
   const [documentId, setDocumentId] = useState<number | null>(null);
+  const [s3Key, setS3Key] = useState<string | null>(null);
 
   // Process file URLs on component mount
   useEffect(() => {
-    if (fileUrls.length === 0) {
+    if (fileUrls.length === 0 && pendingJobs.length === 0) {
       setError("No files provided.");
     } else {
       if (JSON.stringify(fileUrls) !== JSON.stringify(files)) {
@@ -155,8 +158,8 @@ function ResultsContent() {
 
         setApiLoading(true);
         setAnalysisProgress({
-          current: 0,
-          total: 5,
+          current: 5,
+          total: 100,
           currentType: "Uploading file...",
         });
 
@@ -170,22 +173,61 @@ function ResultsContent() {
         const esg_api = process.env.NEXT_PUBLIC_ESG_API;
         console.log("ESG API URL:", esg_api);
 
-        // Step 1: Upload the PDF(s) to get s3_object_key(s)
-        const isMultiFile = files.length > 1;
-        let uploadData: UploadResponse | UploadResponse[];
-        let filenameWithoutExtension: string;
+        let jobIdsToPoll = pendingJobs;
 
-        if (isMultiFile) {
-          // Upload all files for multi-file analysis
-          console.log("Uploading multiple files for multi-file analysis...");
-          const uploadPromises = files.map(async (fileUrl, idx) => {
-            const response = await fetch(fileUrl);
+        // Only upload and enqueue if we don't already have pending jobs
+        if (pendingJobs.length === 0) {
+          // Step 1: Upload the PDF(s) to get s3_object_key(s)
+          const isMultiFile = files.length > 1;
+          let uploadData: UploadResponse | UploadResponse[];
+          let filenameWithoutExtension: string;
+
+          if (isMultiFile) {
+            // Upload all files for multi-file analysis
+            console.log("Uploading multiple files for multi-file analysis...");
+            const uploadPromises = files.map(async (fileUrl, idx) => {
+              const response = await fetch(fileUrl);
+              const blob = await response.blob();
+              const originalFilename = fileNames[idx] || `file-${idx}.pdf`;
+
+              const uploadFormData = new FormData();
+              uploadFormData.append("pdf", blob, originalFilename);
+
+              const uploadResponse = await fetch(`${esg_api}/upload`, {
+                method: "POST",
+                mode: "cors",
+                body: uploadFormData,
+              });
+
+              if (!uploadResponse.ok) {
+                throw new Error(
+                  `Upload failed for file ${idx + 1} with status: ${
+                    uploadResponse.status
+                  }`
+                );
+              }
+
+              return await uploadResponse.json();
+            });
+
+            uploadData = await Promise.all(uploadPromises);
+            console.log("All files uploaded successfully:", uploadData);
+          } else {
+            // Single file upload (existing logic)
+            const response = await fetch(files[fileIndex]);
             const blob = await response.blob();
-            const originalFilename = fileNames[idx] || `file-${idx}.pdf`;
+            console.log("PDF blob retrieved:", blob.size, "bytes");
 
             const uploadFormData = new FormData();
+            const originalFilename =
+              fileNames[fileIndex] || `file-${fileIndex}.pdf`;
+
+            // Remove .pdf extension from filename for API
+            filenameWithoutExtension = originalFilename.replace(/\.pdf$/i, "");
+
             uploadFormData.append("pdf", blob, originalFilename);
 
+            console.log("Uploading file to get s3_object_key...");
             const uploadResponse = await fetch(`${esg_api}/upload`, {
               method: "POST",
               mode: "cors",
@@ -194,308 +236,145 @@ function ResultsContent() {
 
             if (!uploadResponse.ok) {
               throw new Error(
-                `Upload failed for file ${idx + 1} with status: ${
-                  uploadResponse.status
-                }`
+                `Upload failed with status: ${uploadResponse.status}`
               );
             }
 
-            return await uploadResponse.json();
-          });
-
-          uploadData = await Promise.all(uploadPromises);
-          console.log("All files uploaded successfully:", uploadData);
-        } else {
-          // Single file upload (existing logic)
-          const response = await fetch(files[fileIndex]);
-          const blob = await response.blob();
-          console.log("PDF blob retrieved:", blob.size, "bytes");
-
-          const uploadFormData = new FormData();
-          const originalFilename =
-            fileNames[fileIndex] || `file-${fileIndex}.pdf`;
-
-          // Remove .pdf extension from filename for API
-          filenameWithoutExtension = originalFilename.replace(/\.pdf$/i, "");
-
-          uploadFormData.append("pdf", blob, originalFilename);
-
-          console.log("Uploading file to get s3_object_key...");
-          const uploadResponse = await fetch(`${esg_api}/upload`, {
-            method: "POST",
-            mode: "cors",
-            body: uploadFormData,
-          });
-
-          if (!uploadResponse.ok) {
-            throw new Error(
-              `Upload failed with status: ${uploadResponse.status}`
+            uploadData = await uploadResponse.json();
+            console.log(
+              "Upload successful, s3_object_key:",
+              (uploadData as UploadResponse).s3_object_key
             );
           }
 
-          uploadData = await uploadResponse.json();
-          console.log(
-            "Upload successful, s3_object_key:",
-            (uploadData as UploadResponse).s3_object_key
-          );
+          setAnalysisProgress({
+            current: 10,
+            total: 100,
+            currentType: "Queuing analysis job...",
+          });
+
+          // Prepare payload
+          let evaluatePayload;
+          if (isMultiFile) {
+            evaluatePayload = {
+              s3_object_keys: (uploadData as UploadResponse[]).map(
+                (upload) => upload.s3_object_key
+              ),
+              filenames: files.map((fileUrl, idx) =>
+                (fileNames[idx] || `file-${idx}.pdf`).replace(/\.pdf$/i, "")
+              ),
+              document_types: files.map(
+                (fileUrl, idx) => docTypes[idx] || "sustainability_report"
+              ),
+            };
+          } else {
+            evaluatePayload = {
+              s3_object_keys: [(uploadData as UploadResponse).s3_object_key],
+              filenames: [filenameWithoutExtension!],
+              document_types: [docTypes[fileIndex] || "sustainability_report"],
+            };
+          }
+
+          console.log("Enqueuing job...", evaluatePayload);
+          const enqueueResponse = await fetch("/api/evaluate/enqueue", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(evaluatePayload)
+          });
+
+          if (!enqueueResponse.ok) {
+            throw new Error(`Failed to enqueue job: ${await enqueueResponse.text()}`);
+          }
+
+          const { jobIds } = await enqueueResponse.json();
+          console.log(`Jobs queued successfully. Job IDs:`, jobIds);
+          
+          setPendingJobs(jobIds);
+          jobIdsToPoll = jobIds;
         }
 
-        setAnalysisProgress({
-          current: 1,
-          total: 5,
-          currentType: "Starting analysis...",
-        });
+        setAnalysisProgress(null); // Clear progress bar since we use dots now
 
-        // Step 2: Make 4 separate requests for each GRI type in parallel
-        const griTypes = [
-          "governance",
-          "economic",
-          "social",
-          "environmental",
-        ] as const;
 
+        // Poll for status of multiple jobs
+        let localPendingJobs = [...jobIdsToPoll];
         let totalSpdiIndex = 0;
-        let allIndicators: any[] = [];
-
-        setCurrentGriType(null);
+        let accumulatedIndicators: any[] = [];
+        
         setFinishedGriTypes([]);
-        setInProgressGriTypes([]);
+        setInProgressGriTypes(["governance", "economic", "social", "environmental"]);
 
-        // Set all GRI types as in-progress immediately since they'll run in parallel
-        setInProgressGriTypes([...griTypes]);
+        while (localPendingJobs.length > 0) {
+          await new Promise((resolve) => setTimeout(resolve, 3000));
 
-        // Helper function to make individual GRI requests with retry logic
-        const makeGriRequest = async (
-          griType: GriType,
-          retryCount = 0
-        ): Promise<{ griType: GriType; griData: GriResponse }> => {
-          const maxRetries = 3;
-          const baseDelay = 2000; // 2 seconds base delay
+          for (const jobId of [...localPendingJobs]) {
+            try {
+              const statusResponse = await fetch(`/api/evaluate/status?jobId=${jobId}`);
+              if (!statusResponse.ok) continue;
 
-          try {
-            console.log(
-              `Making request for ${griType}${
-                retryCount > 0 ? ` (retry ${retryCount})` : ""
-              }...`
-            );
+              const statusData = await statusResponse.json();
 
-            // Determine which endpoint to use based on number of files
-            const isMultiFile = files.length > 1;
-            const endpoint = isMultiFile
-              ? `${esg_api}/evaluate-multi`
-              : `${esg_api}/evaluate`;
+              if (statusData.status === "completed") {
+                const finalData = statusData.results;
+                const completedType = finalData.gri_type;
+                
+                if (!documentId && finalData.id) {
+                  setDocumentId(finalData.id);
+                }
+                if (!s3Key && statusData.data?.s3_object_keys?.length > 0) {
+                  setS3Key(statusData.data.s3_object_keys[0]);
+                }
 
-            // Prepare payload based on endpoint
-            let evaluatePayload;
-            if (isMultiFile) {
-              // For multi-file, include all file information as separate arrays
-              evaluatePayload = {
-                s3_object_keys: (uploadData as UploadResponse[]).map(
-                  (upload) => upload.s3_object_key
-                ),
-                filenames: files.map((fileUrl, idx) =>
-                  (fileNames[idx] || `file-${idx}.pdf`).replace(/\.pdf$/i, "")
-                ),
-                document_types: files.map(
-                  (fileUrl, idx) => docTypes[idx] || "sustainability_report"
-                ),
-              };
-            } else {
-              // For single file, use existing payload structure
-              evaluatePayload = {
-                s3_object_key: (uploadData as UploadResponse).s3_object_key,
-                filename: filenameWithoutExtension,
-              };
-            }
-
-            // Log the request details
-            console.log(
-              `=== ${
-                isMultiFile ? "/evaluate-multi" : "/evaluate"
-              } Request for ${griType} ===`
-            );
-            console.log("Endpoint:", endpoint);
-            console.log("Payload:", evaluatePayload);
-
-            const evaluateResponse = await fetch(
-              `${endpoint}?gri_type=${griType}&document_type=${
-                docTypes[fileIndex] || "sustainability_report"
-              }`,
-              {
-                method: "POST",
-                mode: "cors",
-                headers: {
-                  "Content-Type": "application/json",
-                },
-                body: JSON.stringify(evaluatePayload),
-              }
-            );
-
-            console.log(
-              `=== ${
-                isMultiFile ? "/evaluate-multi" : "/evaluate"
-              } Response for ${griType} ===`
-            );
-            console.log("Status:", evaluateResponse.status);
-            console.log("Status Text:", evaluateResponse.statusText);
-            console.log(
-              "Headers:",
-              Object.fromEntries(evaluateResponse.headers.entries())
-            );
-
-            if (!evaluateResponse.ok) {
-              // Log error response body
-              const errorText = await evaluateResponse.text();
-              console.error(`Error response body for ${griType}:`, errorText);
-
-              // Check if this is a retryable error
-              const isRetryableError =
-                evaluateResponse.status === 500 ||
-                evaluateResponse.status === 502 ||
-                evaluateResponse.status === 503 ||
-                evaluateResponse.status === 504 ||
-                errorText.includes("timeout") ||
-                errorText.includes("Read timeout");
-
-              if (isRetryableError && retryCount < maxRetries) {
-                const delay = baseDelay * Math.pow(2, retryCount); // Exponential backoff
-                console.log(
-                  `Retryable error for ${griType}. Retrying in ${delay}ms... (attempt ${
-                    retryCount + 1
-                  }/${maxRetries})`
+                totalSpdiIndex += finalData.summary?.spdi_index || 0;
+                
+                const newIndicators = Object.entries(finalData.indicators).map(
+                  ([key, value]: [string, any]) => ({
+                    index: key,
+                    score: value.score,
+                    title: value.title,
+                    explanation: value.reasoning,
+                    type: value.type,
+                    sub_type: value.sub_type,
+                    description: value.description,
+                  })
                 );
 
-                // Wait before retrying
-                await new Promise((resolve) => setTimeout(resolve, delay));
+                accumulatedIndicators.push(...newIndicators);
+                setSpdiIndex(totalSpdiIndex);
+                setAllIndicators([...accumulatedIndicators]);
+                
+                // Mark this type as finished to update UI
+                if (completedType) {
+                  setFinishedGriTypes((prev) => [...prev, completedType]);
+                  setInProgressGriTypes((prev) => prev.filter((t) => t !== completedType));
+                }
 
-                // Retry the request
-                return makeGriRequest(griType, retryCount + 1);
+                // Remove from pending queue
+                localPendingJobs = localPendingJobs.filter(id => id !== jobId);
+                
+                // Keep global context synced so the header widget updates accurately
+                setPendingJobs(prev => prev.filter(id => id !== jobId));
+              } else if (statusData.status === "failed") {
+                localPendingJobs = localPendingJobs.filter(id => id !== jobId);
+                setPendingJobs(prev => prev.filter(id => id !== jobId));
+                console.error(`Job failed: ${statusData.error}`);
+                // Don't throw, just warn, so other jobs can finish
+                setApiError(`Warning: A job failed: ${statusData.error}`);
+              } else {
+                if (!s3Key && statusData.data?.s3_object_keys?.length > 0) {
+                  setS3Key(statusData.data.s3_object_keys[0]);
+                }
               }
-
-              throw new Error(
-                `${griType} evaluation failed with status: ${evaluateResponse.status} - ${errorText}`
-              );
+            } catch (err) {
+              console.error("Error polling job", jobId, err);
             }
-
-            const griData: GriResponse = await evaluateResponse.json();
-            console.log(`Response for ${griType}:`, griData);
-            console.log(
-              `${griType} analysis completed${
-                retryCount > 0 ? ` after ${retryCount} retries` : ""
-              }`
-            );
-
-            return { griType, griData };
-          } catch (error) {
-            // Handle network errors or other exceptions
-            if (retryCount < maxRetries) {
-              const delay = baseDelay * Math.pow(2, retryCount);
-              console.log(
-                `Network error for ${griType}. Retrying in ${delay}ms... (attempt ${
-                  retryCount + 1
-                }/${maxRetries})`
-              );
-
-              // Wait before retrying
-              await new Promise((resolve) => setTimeout(resolve, delay));
-
-              // Retry the request
-              return makeGriRequest(griType, retryCount + 1);
-            }
-
-            // If we've exhausted all retries, throw the error
-            throw error;
-          }
-        };
-
-        // Run all GRI requests in parallel and handle results as they complete
-        const promises = griTypes.map(async (griType) => {
-          try {
-            const result = await makeGriRequest(griType);
-
-            // Process result immediately when it completes
-            const { griData } = result;
-
-            // Get document_id from the first response (all responses have the same document_id)
-            if (!documentId && griData.id) {
-              console.log(
-                "Setting documentId from evaluate response:",
-                griData.id
-              );
-              setDocumentId(griData.id);
-            }
-
-            // Update totals immediately
-            totalSpdiIndex += griData.summary.spdi_index ?? 0;
-
-            // Add indicators to the flat list immediately
-            const newIndicators = Object.entries(griData.indicators).map(
-              ([key, value]) => ({
-                index: key,
-                score: value.score,
-                title: value.title,
-                explanation: value.reasoning,
-                type: value.type,
-                sub_type: value.sub_type,
-                description: value.description,
-              })
-            );
-
-            allIndicators.push(...newIndicators);
-
-            // Update state immediately after each response
-            setSpdiIndex(totalSpdiIndex);
-            setAllIndicators([...allIndicators]);
-
-            setFinishedGriTypes((prev) => [...prev, griType]);
-            setInProgressGriTypes((prev) =>
-              prev.filter((type) => type !== griType)
-            );
-
-            return result;
-          } catch (error) {
-            console.error(`Error analyzing ${griType}:`, error);
-            setInProgressGriTypes((prev) =>
-              prev.filter((type) => type !== griType)
-            );
-
-            // Don't throw the error, just return null to indicate failure
-            // This allows other requests to continue
-            return null;
-          }
-        });
-
-        // Wait for all promises to complete (but results are already processed)
-        const results = await Promise.allSettled(promises);
-
-        // Check if any requests failed
-        const failedRequests = results.filter(
-          (result) =>
-            result.status === "rejected" ||
-            (result.status === "fulfilled" && result.value === null)
-        );
-
-        if (failedRequests.length > 0) {
-          console.warn(
-            `${failedRequests.length} GRI analysis requests failed, but continuing with partial results`
-          );
-
-          // Show a warning to the user about partial results
-          if (failedRequests.length === griTypes.length) {
-            // All requests failed
-            throw new Error(
-              "All GRI analysis requests failed. Please try again later."
-            );
-          } else {
-            // Some requests failed, show warning but continue
-            setApiError(
-              `Warning: ${failedRequests.length} out of ${griTypes.length} GRI analyses failed. Showing partial results.`
-            );
           }
         }
 
+        console.log("All analysis jobs complete");
+        setPendingJobs([]);
+        
         setCurrentGriType(null);
-
         setApiLoading(false);
         setAnalysisProgress(null);
       } catch (err) {
@@ -503,16 +382,17 @@ function ResultsContent() {
         setApiError(
           err instanceof Error ? err.message : "Failed to fetch ESG data"
         );
+        setPendingJobs([]);
         setApiLoading(false);
         setAnalysisProgress(null);
       }
     }
 
-    // Only run when files are loaded or when file index changes
-    if (files.length > 0 && !isLoading) {
+    // Run when files are loaded OR when we have pending jobs to resume
+    if ((files.length > 0 && !isLoading) || pendingJobs.length > 0) {
       fetchEsgData();
     }
-  }, [files, fileIndex, isLoading]);
+  }, [files, fileIndex, isLoading, pendingJobs.length]);
 
   // Transform API data into array format for rendering
   const esgResults = apiData
@@ -704,14 +584,14 @@ function ResultsContent() {
       <div className="w-1/2 bg-gray-900 p-4 rounded-lg flex flex-col items-center">
         {isLoading ? (
           <p>Loading PDF...</p>
-        ) : error ? (
+        ) : error && !s3Key ? (
           <p className="text-red-500">{error}</p>
-        ) : files.length > 0 ? (
+        ) : files.length > 0 || s3Key ? (
           <>
             {showPdf && (
               <embed
                 key={`pdf-embed-${fileIndex}`}
-                src={`${files[fileIndex]}#${new Date().getTime()}`}
+                src={s3Key ? `${process.env.NEXT_PUBLIC_ESG_API}/pdf/${s3Key}` : files[fileIndex]}
                 className="w-full h-full border border-gray-700 rounded"
                 type="application/pdf"
               />
@@ -808,30 +688,39 @@ function ResultsContent() {
 
         <div className="flex-1 overflow-y-auto p-4">
           {apiLoading && allIndicators.length === 0 ? (
-            <div className="text-center py-8">
-              {analysisProgress ? (
-                <div className="space-y-4">
-                  <p className="text-lg font-semibold text-white">
+            <div className="py-4 space-y-6">
+              {analysisProgress && (
+                <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg mb-6">
+                  <h3 className="text-xl font-bold text-white mb-3">
                     {analysisProgress.currentType}
-                  </p>
-                  <div className="w-full bg-gray-700 rounded-full h-2">
+                  </h3>
+                  <div className="w-full bg-gray-900 rounded-full h-3 mb-3 overflow-hidden">
                     <div
-                      className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                      className="bg-gradient-to-r from-blue-500 to-indigo-500 h-3 rounded-full transition-all duration-500 ease-out"
                       style={{
-                        width: `${
-                          (analysisProgress.current / analysisProgress.total) *
-                          100
-                        }%`,
+                        width: `${(analysisProgress.current / analysisProgress.total) * 100}%`,
                       }}
                     ></div>
                   </div>
-                  <p className="text-sm text-gray-400">
-                    Step {analysisProgress.current} of {analysisProgress.total}
-                  </p>
                 </div>
-              ) : (
-                <p>Loading SPDI analysis results...</p>
               )}
+              
+              {/* Skeleton Cards */}
+              <div className="space-y-4 opacity-70">
+                {[1, 2, 3, 4].map((i) => (
+                  <div key={i} className="bg-gray-800 p-6 rounded-lg shadow-md animate-pulse border border-gray-700">
+                    <div className="flex justify-between items-center mb-4">
+                      <div className="h-6 bg-gray-700 rounded w-1/4"></div>
+                      <div className="h-6 bg-gray-700 rounded w-1/6"></div>
+                    </div>
+                    <div>
+                      <div className="h-4 bg-gray-700 rounded w-full mb-3"></div>
+                      <div className="h-4 bg-gray-700 rounded w-5/6 mb-3"></div>
+                      <div className="h-4 bg-gray-700 rounded w-4/6"></div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           ) : apiError ? (
             <p className="text-red-500 text-center py-8">{apiError}</p>
@@ -979,8 +868,8 @@ function ResultsContent() {
                               rows={4}
                             />
                           ) : (
-                            <p className="text-sm text-gray-400 leading-relaxed">
-                              {result.explanation}
+                            <p className={`text-base leading-relaxed whitespace-pre-wrap ${!result.explanation || result.explanation.trim() === '' ? 'text-gray-500 italic' : 'text-gray-300'}`}>
+                              {result.explanation && result.explanation.trim() !== '' ? result.explanation : "No explanation provided."}
                             </p>
                           )}
                         </div>

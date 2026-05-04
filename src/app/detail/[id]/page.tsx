@@ -518,8 +518,8 @@ export default function DocumentDetailPage() {
                         rows={4}
                       />
                     ) : (
-                      <p className="text-sm text-gray-300 bg-gray-750/30 p-2 rounded">
-                        {indicator.reasoning}
+                      <p className={`text-sm bg-gray-750/30 p-2 rounded ${!indicator.reasoning || indicator.reasoning.trim() === '' ? 'text-gray-500 italic' : 'text-gray-300'}`}>
+                        {indicator.reasoning && indicator.reasoning.trim() !== '' ? indicator.reasoning : "No explanation provided."}
                       </p>
                     )}
                   </div>
@@ -617,7 +617,9 @@ export default function DocumentDetailPage() {
                             rows={2}
                           />
                         ) : (
-                          <div className="truncate">{indicator.reasoning}</div>
+                          <div className={`truncate ${!indicator.reasoning || indicator.reasoning.trim() === '' ? 'text-gray-500 italic' : ''}`}>
+                            {indicator.reasoning && indicator.reasoning.trim() !== '' ? indicator.reasoning : "No explanation provided."}
+                          </div>
                         )}
                       </td>
                       <td className="px-4 py-4 text-center">

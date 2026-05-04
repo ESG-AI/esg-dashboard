@@ -5,6 +5,7 @@ import {
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import {Header} from "@/components/Header"
+import { JobProvider } from "@/context/JobContext";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -30,10 +31,12 @@ export default function RootLayout({
     <ClerkProvider>
       <html lang="en">
         <body className="antialiased bg-gray-900 text-gray-200">
-          <header>
-            <Header />
-          </header>
-          <main>{children}</main>
+          <JobProvider>
+            <header>
+              <Header />
+            </header>
+            <main>{children}</main>
+          </JobProvider>
         </body>
       </html>
     </ClerkProvider>
