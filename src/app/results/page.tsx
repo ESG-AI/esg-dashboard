@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, Suspense, useCallback } from "react";
+import { useEffect, useState, Suspense, useCallback, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useJobs } from "@/context/JobContext";
@@ -107,6 +107,10 @@ function ResultsContent() {
     total: number;
     currentType: string;
   } | null>(null);
+  // Prevent automatic duplicate enqueues while staying on the page
+  const hasEnqueuedRef = useRef(false);
+  // Track whether polling is currently active (independent of apiLoading for UI)
+  const isPollingRef = useRef(false);
 
   // New state for progressive loading
   const [allIndicators, setAllIndicators] = useState<Indicator[]>([]);
@@ -119,7 +123,7 @@ function ResultsContent() {
 
   // Edit state for indicators
   const [editingIndicators, setEditingIndicators] = useState<Set<number>>(
-    new Set()
+    new Set(),
   );
   const [editedValues, setEditedValues] = useState<{
     [key: number]: { score: number; explanation: string };
@@ -147,7 +151,7 @@ function ResultsContent() {
       "files:",
       files,
       "isLoading:",
-      isLoading
+      isLoading,
     );
     async function fetchEsgData() {
       try {
@@ -163,10 +167,15 @@ function ResultsContent() {
           currentType: "Uploading file...",
         });
 
-        // Reset progressive loading state
+        // Reset progressive loading state but NOT files/PDFs
         setAllIndicators([]);
         setSpdiIndex(0);
         setDocumentId(null);
+        // Keep s3Key to maintain PDF visibility during polling
+        // Only reset on new file uploads
+        if (pendingJobs.length === 0) {
+          setS3Key(null);
+        }
 
         console.log("Starting API request for file index:", fileIndex);
 
@@ -176,7 +185,8 @@ function ResultsContent() {
         let jobIdsToPoll = pendingJobs;
 
         // Only upload and enqueue if we don't already have pending jobs
-        if (pendingJobs.length === 0) {
+        // and we haven't already enqueued during this session (prevents duplicate runs)
+        if (pendingJobs.length === 0 && !hasEnqueuedRef.current) {
           // Step 1: Upload the PDF(s) to get s3_object_key(s)
           const isMultiFile = files.length > 1;
           let uploadData: UploadResponse | UploadResponse[];
@@ -203,7 +213,7 @@ function ResultsContent() {
                 throw new Error(
                   `Upload failed for file ${idx + 1} with status: ${
                     uploadResponse.status
-                  }`
+                  }`,
                 );
               }
 
@@ -236,14 +246,14 @@ function ResultsContent() {
 
             if (!uploadResponse.ok) {
               throw new Error(
-                `Upload failed with status: ${uploadResponse.status}`
+                `Upload failed with status: ${uploadResponse.status}`,
               );
             }
 
             uploadData = await uploadResponse.json();
             console.log(
               "Upload successful, s3_object_key:",
-              (uploadData as UploadResponse).s3_object_key
+              (uploadData as UploadResponse).s3_object_key,
             );
           }
 
@@ -258,13 +268,13 @@ function ResultsContent() {
           if (isMultiFile) {
             evaluatePayload = {
               s3_object_keys: (uploadData as UploadResponse[]).map(
-                (upload) => upload.s3_object_key
+                (upload) => upload.s3_object_key,
               ),
               filenames: files.map((fileUrl, idx) =>
-                (fileNames[idx] || `file-${idx}.pdf`).replace(/\.pdf$/i, "")
+                (fileNames[idx] || `file-${idx}.pdf`).replace(/\.pdf$/i, ""),
               ),
               document_types: files.map(
-                (fileUrl, idx) => docTypes[idx] || "sustainability_report"
+                (fileUrl, idx) => docTypes[idx] || "sustainability_report",
               ),
             };
           } else {
@@ -279,37 +289,54 @@ function ResultsContent() {
           const enqueueResponse = await fetch("/api/evaluate/enqueue", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(evaluatePayload)
+            body: JSON.stringify(evaluatePayload),
           });
 
           if (!enqueueResponse.ok) {
-            throw new Error(`Failed to enqueue job: ${await enqueueResponse.text()}`);
+            throw new Error(
+              `Failed to enqueue job: ${await enqueueResponse.text()}`,
+            );
           }
 
           const { jobIds } = await enqueueResponse.json();
           console.log(`Jobs queued successfully. Job IDs:`, jobIds);
-          
+
+          // mark that we've enqueued during this session
+          hasEnqueuedRef.current = true;
+
           setPendingJobs(jobIds);
           jobIdsToPoll = jobIds;
         }
 
         setAnalysisProgress(null); // Clear progress bar since we use dots now
 
-
         // Poll for status of multiple jobs
         let localPendingJobs = [...jobIdsToPoll];
         let totalSpdiIndex = 0;
         let accumulatedIndicators: any[] = [];
-        
-        setFinishedGriTypes([]);
-        setInProgressGriTypes(["governance", "economic", "social", "environmental"]);
+        let firstDocumentId: number | null = null;
 
+        setFinishedGriTypes([]);
+        setInProgressGriTypes([
+          "governance",
+          "economic",
+          "social",
+          "environmental",
+        ]);
+        isPollingRef.current = true;
+
+        console.log(
+          "Starting job polling loop with pending jobs:",
+          jobIdsToPoll,
+        );
         while (localPendingJobs.length > 0) {
           await new Promise((resolve) => setTimeout(resolve, 3000));
 
           for (const jobId of [...localPendingJobs]) {
             try {
-              const statusResponse = await fetch(`/api/evaluate/status?jobId=${jobId}`);
+              const statusResponse = await fetch(
+                `/api/evaluate/status?jobId=${jobId}`,
+              );
               if (!statusResponse.ok) continue;
 
               const statusData = await statusResponse.json();
@@ -317,16 +344,30 @@ function ResultsContent() {
               if (statusData.status === "completed") {
                 const finalData = statusData.results;
                 const completedType = finalData.gri_type;
-                
-                if (!documentId && finalData.id) {
-                  setDocumentId(finalData.id);
+
+                console.log(
+                  `Job ${jobId} completed. GRI Type: ${completedType}`,
+                  {
+                    indicatorCount: Object.keys(finalData.indicators || {})
+                      .length,
+                    hasId: !!finalData.id,
+                    id: finalData.id,
+                    summary: finalData.summary,
+                  },
+                );
+
+                // Capture documentId from first job result
+                if (!firstDocumentId && finalData.id) {
+                  firstDocumentId = finalData.id;
+                  console.log("Captured documentId:", firstDocumentId);
+                  setDocumentId(firstDocumentId);
                 }
                 if (!s3Key && statusData.data?.s3_object_keys?.length > 0) {
                   setS3Key(statusData.data.s3_object_keys[0]);
                 }
 
                 totalSpdiIndex += finalData.summary?.spdi_index || 0;
-                
+
                 const newIndicators = Object.entries(finalData.indicators).map(
                   ([key, value]: [string, any]) => ({
                     index: key,
@@ -336,31 +377,58 @@ function ResultsContent() {
                     type: value.type,
                     sub_type: value.sub_type,
                     description: value.description,
-                  })
+                  }),
                 );
 
+                console.log(
+                  `Adding ${newIndicators.length} indicators for ${completedType}:`,
+                  newIndicators.map((i) => i.index),
+                );
                 accumulatedIndicators.push(...newIndicators);
                 setSpdiIndex(totalSpdiIndex);
                 setAllIndicators([...accumulatedIndicators]);
-                
+                console.log(
+                  "Total accumulated indicators:",
+                  accumulatedIndicators.length,
+                  "from",
+                  finishedGriTypes.length + 1,
+                  "GRI types",
+                );
+
                 // Mark this type as finished to update UI
                 if (completedType) {
                   setFinishedGriTypes((prev) => [...prev, completedType]);
-                  setInProgressGriTypes((prev) => prev.filter((t) => t !== completedType));
+                  setInProgressGriTypes((prev) =>
+                    prev.filter((t) => t !== completedType),
+                  );
                 }
 
                 // Remove from pending queue
-                localPendingJobs = localPendingJobs.filter(id => id !== jobId);
-                
+                localPendingJobs = localPendingJobs.filter(
+                  (id) => id !== jobId,
+                );
+                console.log("Remaining pending jobs:", localPendingJobs);
+
                 // Keep global context synced so the header widget updates accurately
-                setPendingJobs(prev => prev.filter(id => id !== jobId));
+                setPendingJobs((prev) => prev.filter((id) => id !== jobId));
               } else if (statusData.status === "failed") {
-                localPendingJobs = localPendingJobs.filter(id => id !== jobId);
-                setPendingJobs(prev => prev.filter(id => id !== jobId));
+                localPendingJobs = localPendingJobs.filter(
+                  (id) => id !== jobId,
+                );
+                setPendingJobs((prev) => prev.filter((id) => id !== jobId));
                 console.error(`Job failed: ${statusData.error}`);
                 // Don't throw, just warn, so other jobs can finish
                 setApiError(`Warning: A job failed: ${statusData.error}`);
+              } else if (statusData.status === "not_found") {
+                console.warn(`Job ${jobId} not found. Removing from queue.`);
+                localPendingJobs = localPendingJobs.filter(
+                  (id) => id !== jobId,
+                );
+                setPendingJobs((prev) => prev.filter((id) => id !== jobId));
               } else {
+                console.log(
+                  `Job ${jobId} still in progress. Status: ${statusData.status}`,
+                );
                 if (!s3Key && statusData.data?.s3_object_keys?.length > 0) {
                   setS3Key(statusData.data.s3_object_keys[0]);
                 }
@@ -372,15 +440,27 @@ function ResultsContent() {
         }
 
         console.log("All analysis jobs complete");
+        console.log(
+          "Final state: accumulated indicators:",
+          accumulatedIndicators.length,
+          "documentId:",
+          firstDocumentId,
+          "finishedGriTypes:",
+          finishedGriTypes,
+        );
+        isPollingRef.current = false;
         setPendingJobs([]);
-        
-        setCurrentGriType(null);
+        setFinishedGriTypes((prev) =>
+          prev.length > 0
+            ? prev
+            : ["governance", "economic", "social", "environmental"],
+        );
+        setInProgressGriTypes([]);
         setApiLoading(false);
-        setAnalysisProgress(null);
       } catch (err) {
         console.error("API request failed:", err);
         setApiError(
-          err instanceof Error ? err.message : "Failed to fetch ESG data"
+          err instanceof Error ? err.message : "Failed to fetch ESG data",
         );
         setPendingJobs([]);
         setApiLoading(false);
@@ -404,14 +484,17 @@ function ResultsContent() {
     : [];
 
   // Group indicators by type for display
-  const groupedIndicators = allIndicators.reduce((acc, indicator) => {
-    const type = indicator.type || "other";
-    if (!acc[type]) {
-      acc[type] = [];
-    }
-    acc[type].push(indicator);
-    return acc;
-  }, {} as Record<string, Indicator[]>);
+  const groupedIndicators = allIndicators.reduce(
+    (acc, indicator) => {
+      const type = indicator.type || "other";
+      if (!acc[type]) {
+        acc[type] = [];
+      }
+      acc[type].push(indicator);
+      return acc;
+    },
+    {} as Record<string, Indicator[]>,
+  );
 
   // Get type display names and colors
   const getTypeDisplayName = (type: string) => {
@@ -447,7 +530,7 @@ function ResultsContent() {
         "other",
       ];
       return order.indexOf(a) - order.indexOf(b);
-    }
+    },
   );
 
   const handleNextFile = () => {
@@ -482,7 +565,7 @@ function ResultsContent() {
   const handleEditIndicator = (
     index: number,
     currentScore: number,
-    currentExplanation: string
+    currentExplanation: string,
   ) => {
     setEditingIndicators((prev) => new Set(prev).add(index));
     setEditedValues((prev) => ({
@@ -527,7 +610,7 @@ function ResultsContent() {
             score: editedValue.score,
             reasoning: editedValue.explanation,
           }),
-        }
+        },
       );
 
       if (!response.ok) {
@@ -545,8 +628,8 @@ function ResultsContent() {
                 score: editedValue.score,
                 explanation: editedValue.explanation,
               }
-            : indicator
-        )
+            : indicator,
+        ),
       );
 
       // Update SPDI index if provided
@@ -591,7 +674,11 @@ function ResultsContent() {
             {showPdf && (
               <embed
                 key={`pdf-embed-${fileIndex}`}
-                src={s3Key ? `${process.env.NEXT_PUBLIC_ESG_API}/pdf/${s3Key}` : files[fileIndex]}
+                src={
+                  s3Key
+                    ? `${process.env.NEXT_PUBLIC_ESG_API}/pdf/${s3Key}`
+                    : files[fileIndex]
+                }
                 className="w-full h-full border border-gray-700 rounded"
                 type="application/pdf"
               />
@@ -649,8 +736,8 @@ function ResultsContent() {
                         finishedGriTypes.includes(griType)
                           ? "text-green-400"
                           : inProgressGriTypes.includes(griType)
-                          ? "text-blue-400"
-                          : "text-gray-500"
+                            ? "text-blue-400"
+                            : "text-gray-500"
                       }`}
                     >
                       {griType.charAt(0).toUpperCase() + griType.slice(1)}
@@ -679,7 +766,7 @@ function ResultsContent() {
                   SPDI Index Score out of 33 Indicators
                 </p>
                 <p className="text-md font-bold text-green-400">
-                  {spdiIndex || "N/A"}
+                  {spdiIndex > 0 ? spdiIndex : "N/A"}
                 </p>
               </div>
             </div>
@@ -704,11 +791,14 @@ function ResultsContent() {
                   </div>
                 </div>
               )}
-              
+
               {/* Skeleton Cards */}
               <div className="space-y-4 opacity-70">
                 {[1, 2, 3, 4].map((i) => (
-                  <div key={i} className="bg-gray-800 p-6 rounded-lg shadow-md animate-pulse border border-gray-700">
+                  <div
+                    key={i}
+                    className="bg-gray-800 p-6 rounded-lg shadow-md animate-pulse border border-gray-700"
+                  >
                     <div className="flex justify-between items-center mb-4">
                       <div className="h-6 bg-gray-700 rounded w-1/4"></div>
                       <div className="h-6 bg-gray-700 rounded w-1/6"></div>
@@ -727,7 +817,7 @@ function ResultsContent() {
           ) : allIndicators.length > 0 ? (
             <div className="space-y-6">
               {/* Show partial results notice if still loading */}
-              {apiLoading && (
+              {inProgressGriTypes.length > 0 && (
                 <div className="bg-blue-900/30 border border-blue-700 rounded-lg p-3 mb-4">
                   <p className="text-blue-300 text-sm">
                     ⚡ Showing partial results while remaining analyses
@@ -741,7 +831,7 @@ function ResultsContent() {
                   {/* GRI Type Header */}
                   <div
                     className={`bg-gray-700 p-4 rounded-lg border-l-4 ${getTypeColor(
-                      type
+                      type,
                     )}`}
                   >
                     <h2 className="text-xl font-bold text-white">
@@ -753,7 +843,7 @@ function ResultsContent() {
                   {indicators.map((result, index: number) => {
                     // Calculate the global index for this indicator
                     const globalIndex = allIndicators.findIndex(
-                      (ind) => ind.index === result.index
+                      (ind) => ind.index === result.index,
                     );
                     return (
                       <div
@@ -778,7 +868,7 @@ function ResultsContent() {
                                   onChange={(e) =>
                                     handleScoreChange(
                                       globalIndex,
-                                      parseInt(e.target.value) || 0
+                                      parseInt(e.target.value) || 0,
                                     )
                                   }
                                   className="w-16 bg-gray-700 text-white px-2 py-1 rounded text-center"
@@ -791,27 +881,30 @@ function ResultsContent() {
                                   result.score < 2
                                     ? "text-red-400"
                                     : result.score == 2
-                                    ? "text-blue-400"
-                                    : "text-green-400"
+                                      ? "text-blue-400"
+                                      : "text-green-400"
                                 }`}
                               >
                                 Score: {result.score} / 4
                               </p>
                             )}
 
-                            {/* Edit/Save buttons - only show when all requests finished */}
+                            {/* Edit/Save buttons - show when all jobs finished and documentId is available */}
                             {(() => {
-                              console.log("Edit button condition check:", {
-                                inProgressGriTypesLength:
-                                  inProgressGriTypes.length,
-                                documentId: documentId,
-                                shouldShow:
-                                  inProgressGriTypes.length === 0 && documentId,
-                              });
-                              return (
-                                inProgressGriTypes.length === 0 &&
-                                documentId &&
-                                (editingIndicators.has(globalIndex) ? (
+                              const isComplete =
+                                inProgressGriTypes.length === 0 && documentId;
+                              console.log(
+                                "Edit button render check for indicator",
+                                result.index,
+                                ":",
+                                {
+                                  inProgressCount: inProgressGriTypes.length,
+                                  hasDocId: !!documentId,
+                                  isComplete,
+                                },
+                              );
+                              return isComplete ? (
+                                editingIndicators.has(globalIndex) ? (
                                   <div className="flex space-x-2">
                                     <button
                                       onClick={() =>
@@ -836,15 +929,15 @@ function ResultsContent() {
                                       handleEditIndicator(
                                         globalIndex,
                                         result.score,
-                                        result.explanation
+                                        result.explanation,
                                       )
                                     }
                                     className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm transition"
                                   >
                                     Edit
                                   </button>
-                                ))
-                              );
+                                )
+                              ) : null;
                             })()}
                           </div>
                         </div>
@@ -861,15 +954,20 @@ function ResultsContent() {
                               onChange={(e) =>
                                 handleExplanationChange(
                                   globalIndex,
-                                  e.target.value
+                                  e.target.value,
                                 )
                               }
                               className="w-full bg-gray-700 text-white p-3 rounded border border-gray-600 focus:border-blue-500 focus:outline-none resize-vertical min-h-24"
                               rows={4}
                             />
                           ) : (
-                            <p className={`text-base leading-relaxed whitespace-pre-wrap ${!result.explanation || result.explanation.trim() === '' ? 'text-gray-500 italic' : 'text-gray-300'}`}>
-                              {result.explanation && result.explanation.trim() !== '' ? result.explanation : "No explanation provided."}
+                            <p
+                              className={`text-base leading-relaxed whitespace-pre-wrap ${!result.explanation || result.explanation.trim() === "" ? "text-gray-500 italic" : "text-gray-300"}`}
+                            >
+                              {result.explanation &&
+                              result.explanation.trim() !== ""
+                                ? result.explanation
+                                : "No explanation provided."}
                             </p>
                           )}
                         </div>
