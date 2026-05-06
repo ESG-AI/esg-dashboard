@@ -145,6 +145,10 @@ function ResultsContent() {
 
   // Fetch API data
   useEffect(() => {
+    const hasPendingJobs = pendingJobs.length > 0;
+    const shouldStartFreshAnalysis =
+      files.length > 0 && !isLoading && !hasEnqueuedRef.current;
+
     console.log(
       "Effect triggered for fileIndex:",
       fileIndex,
@@ -153,28 +157,36 @@ function ResultsContent() {
       "isLoading:",
       isLoading,
     );
+
+    if (isPollingRef.current) {
+      return;
+    }
+
+    if (!hasPendingJobs && !shouldStartFreshAnalysis) {
+      return;
+    }
+
     async function fetchEsgData() {
       try {
-        // Don't try to fetch if no files are available
-        if (files.length === 0 || isLoading) {
-          return;
-        }
-
         setApiLoading(true);
-        setAnalysisProgress({
-          current: 5,
-          total: 100,
-          currentType: "Uploading file...",
-        });
+        isPollingRef.current = true;
 
-        // Reset progressive loading state but NOT files/PDFs
-        setAllIndicators([]);
-        setSpdiIndex(0);
-        setDocumentId(null);
-        // Keep s3Key to maintain PDF visibility during polling
-        // Only reset on new file uploads
-        if (pendingJobs.length === 0) {
+        if (shouldStartFreshAnalysis) {
+          setAnalysisProgress({
+            current: 5,
+            total: 100,
+            currentType: "Uploading file...",
+          });
+
+          // Reset progressive loading state but NOT files/PDFs
+          setAllIndicators([]);
+          setSpdiIndex(0);
+          setDocumentId(null);
+          // Keep s3Key to maintain PDF visibility during polling
+          // Only reset on new file uploads
           setS3Key(null);
+        } else {
+          setAnalysisProgress(null);
         }
 
         console.log("Starting API request for file index:", fileIndex);
@@ -186,7 +198,7 @@ function ResultsContent() {
 
         // Only upload and enqueue if we don't already have pending jobs
         // and we haven't already enqueued during this session (prevents duplicate runs)
-        if (pendingJobs.length === 0 && !hasEnqueuedRef.current) {
+        if (shouldStartFreshAnalysis) {
           // Step 1: Upload the PDF(s) to get s3_object_key(s)
           const isMultiFile = files.length > 1;
           let uploadData: UploadResponse | UploadResponse[];
@@ -323,8 +335,6 @@ function ResultsContent() {
           "social",
           "environmental",
         ]);
-        isPollingRef.current = true;
-
         console.log(
           "Starting job polling loop with pending jobs:",
           jobIdsToPoll,
@@ -469,7 +479,7 @@ function ResultsContent() {
     }
 
     // Run when files are loaded OR when we have pending jobs to resume
-    if ((files.length > 0 && !isLoading) || pendingJobs.length > 0) {
+    if (hasPendingJobs || shouldStartFreshAnalysis) {
       fetchEsgData();
     }
   }, [files, fileIndex, isLoading, pendingJobs.length]);
