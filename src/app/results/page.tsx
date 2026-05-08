@@ -5,11 +5,6 @@ import { useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useJobs } from "@/context/JobContext";
 
-// Type definitions for the new API flow
-interface UploadResponse {
-  s3_object_key: string;
-  filename: string;
-}
 
 interface GriResponse {
   indicators: {
@@ -102,10 +97,12 @@ function ResultsContent() {
   const [apiData, setApiData] = useState<ApiResponse | null>(null);
   const [apiLoading, setApiLoading] = useState(true);
   const [apiError, setApiError] = useState<string | null>(null);
-  const [analysisProgress, setAnalysisProgress] = useState<{
-    current: number;
-    total: number;
-    currentType: string;
+  // Unified progress bar state — covers the full upload → queue lifecycle.
+  // percent 0-80: S3 upload phase; 80-90: queuing; null: hidden (GRI dots take over).
+  const [progress, setProgress] = useState<{
+    label: string;
+    percent: number;
+    detail?: string; // optional filename shown during upload
   } | null>(null);
   // Prevent automatic duplicate enqueues while staying on the page
   const hasEnqueuedRef = useRef(false);
@@ -130,6 +127,7 @@ function ResultsContent() {
   }>({});
   const [documentId, setDocumentId] = useState<number | null>(null);
   const [s3Key, setS3Key] = useState<string | null>(null);
+
 
   // Process file URLs on component mount
   useEffect(() => {
@@ -172,11 +170,7 @@ function ResultsContent() {
         isPollingRef.current = true;
 
         if (shouldStartFreshAnalysis) {
-          setAnalysisProgress({
-            current: 5,
-            total: 100,
-            currentType: "Uploading file...",
-          });
+          setProgress({ label: "Preparing upload...", percent: 2 });
 
           // Reset progressive loading state but NOT files/PDFs
           setAllIndicators([]);
@@ -186,7 +180,7 @@ function ResultsContent() {
           // Only reset on new file uploads
           setS3Key(null);
         } else {
-          setAnalysisProgress(null);
+          setProgress(null);
         }
 
         console.log("Starting API request for file index:", fileIndex);
@@ -199,99 +193,115 @@ function ResultsContent() {
         // Only upload and enqueue if we don't already have pending jobs
         // and we haven't already enqueued during this session (prevents duplicate runs)
         if (shouldStartFreshAnalysis) {
-          // Step 1: Upload the PDF(s) to get s3_object_key(s)
+          // ─── Helper: presign + XHR direct-to-S3 upload ─────────────────────
+          const uploadFileToS3 = (
+            fileUrl: string,
+            originalFilename: string,
+            progressFileIndex: number,
+          ): Promise<string> =>
+            new Promise(async (resolve, reject) => {
+              // 1. Ask backend for a presigned PUT URL
+              const presignRes = await fetch(
+                `${esg_api}/upload/presign?filename=${encodeURIComponent(originalFilename)}&content_type=application/pdf`,
+              );
+              if (!presignRes.ok) {
+                reject(
+                  new Error(
+                    `Failed to get presigned URL: ${presignRes.status}`,
+                  ),
+                );
+                return;
+              }
+              const { presigned_url, object_key } = await presignRes.json();
+
+              // 2. Fetch the local blob
+              const blobRes = await fetch(fileUrl);
+              const blob = await blobRes.blob();
+
+              // 3. PUT directly to S3 via XHR for progress tracking
+              const xhr = new XMLHttpRequest();
+              xhr.open("PUT", presigned_url);
+              xhr.setRequestHeader("Content-Type", "application/pdf");
+
+              xhr.upload.onprogress = (e) => {
+                if (e.lengthComputable) {
+                  const xhrPct = e.loaded / e.total;
+                  // progressFileIndex and files.length are captured via closure
+                  const total = files.length;
+                  const computedPct = Math.round(
+                    ((progressFileIndex + xhrPct) / total) * 80
+                  );
+                  setProgress((prev) => ({
+                    label: prev?.label ?? "Uploading file...",
+                    percent: computedPct,
+                    detail: originalFilename,
+                  }));
+                }
+              };
+
+              xhr.onload = () => {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                  resolve(object_key);
+                } else {
+                  reject(
+                    new Error(
+                      `S3 upload failed for "${originalFilename}" (HTTP ${xhr.status})`,
+                    ),
+                  );
+                }
+              };
+
+              xhr.onerror = () =>
+                reject(new Error(`Network error uploading "${originalFilename}"`));
+
+              xhr.send(blob);
+            });
+
+          // ─── Upload logic ────────────────────────────────────────────────
           const isMultiFile = files.length > 1;
-          let uploadData: UploadResponse | UploadResponse[];
+          let s3ObjectKeys: string[];
           let filenameWithoutExtension: string;
 
           if (isMultiFile) {
-            // Upload all files for multi-file analysis
-            console.log("Uploading multiple files for multi-file analysis...");
-            const uploadPromises = files.map(async (fileUrl, idx) => {
-              const response = await fetch(fileUrl);
-              const blob = await response.blob();
+            console.log("Uploading multiple files via presigned URLs...");
+            s3ObjectKeys = [];
+            for (let idx = 0; idx < files.length; idx++) {
               const originalFilename = fileNames[idx] || `file-${idx}.pdf`;
-
-              const uploadFormData = new FormData();
-              uploadFormData.append("pdf", blob, originalFilename);
-
-              const uploadResponse = await fetch(`${esg_api}/upload`, {
-                method: "POST",
-                mode: "cors",
-                body: uploadFormData,
+              setProgress({
+                label: `Uploading file ${idx + 1} of ${files.length}...`,
+                percent: Math.round((idx / files.length) * 80),
+                detail: originalFilename,
               });
-
-              if (!uploadResponse.ok) {
-                throw new Error(
-                  `Upload failed for file ${idx + 1} with status: ${
-                    uploadResponse.status
-                  }`,
-                );
-              }
-
-              return await uploadResponse.json();
-            });
-
-            uploadData = await Promise.all(uploadPromises);
-            console.log("All files uploaded successfully:", uploadData);
-          } else {
-            // Single file upload (existing logic)
-            const response = await fetch(files[fileIndex]);
-            const blob = await response.blob();
-            console.log("PDF blob retrieved:", blob.size, "bytes");
-
-            const uploadFormData = new FormData();
-            const originalFilename =
-              fileNames[fileIndex] || `file-${fileIndex}.pdf`;
-
-            // Remove .pdf extension from filename for API
-            filenameWithoutExtension = originalFilename.replace(/\.pdf$/i, "");
-
-            uploadFormData.append("pdf", blob, originalFilename);
-
-            console.log("Uploading file to get s3_object_key...");
-            const uploadResponse = await fetch(`${esg_api}/upload`, {
-              method: "POST",
-              mode: "cors",
-              body: uploadFormData,
-            });
-
-            if (!uploadResponse.ok) {
-              throw new Error(
-                `Upload failed with status: ${uploadResponse.status}`,
-              );
+              const key = await uploadFileToS3(files[idx], originalFilename, idx);
+              s3ObjectKeys.push(key);
             }
-
-            uploadData = await uploadResponse.json();
-            console.log(
-              "Upload successful, s3_object_key:",
-              (uploadData as UploadResponse).s3_object_key,
-            );
+            console.log("All files uploaded. Keys:", s3ObjectKeys);
+          } else {
+            const originalFilename = fileNames[fileIndex] || `file-${fileIndex}.pdf`;
+            filenameWithoutExtension = originalFilename.replace(/\.pdf$/i, "");
+            console.log("Uploading single file via presigned URL...");
+            const key = await uploadFileToS3(files[fileIndex], originalFilename, 0);
+            s3ObjectKeys = [key];
+            console.log("Upload complete. S3 key:", key);
           }
 
-          setAnalysisProgress({
-            current: 10,
-            total: 100,
-            currentType: "Queuing analysis job...",
-          });
+          setProgress({ label: "Queuing analysis...", percent: 90 });
 
-          // Prepare payload
+          // Prepare enqueue payload using presigned-upload keys
           let evaluatePayload;
           if (isMultiFile) {
             evaluatePayload = {
-              s3_object_keys: (uploadData as UploadResponse[]).map(
-                (upload) => upload.s3_object_key,
-              ),
-              filenames: files.map((fileUrl, idx) =>
+              s3_object_keys: s3ObjectKeys,
+              filenames: files.map((_, idx) =>
                 (fileNames[idx] || `file-${idx}.pdf`).replace(/\.pdf$/i, ""),
               ),
               document_types: files.map(
-                (fileUrl, idx) => docTypes[idx] || "sustainability_report",
+                (_, idx) => docTypes[idx] || "sustainability_report",
               ),
             };
           } else {
             evaluatePayload = {
-              s3_object_keys: [(uploadData as UploadResponse).s3_object_key],
+              s3_object_keys: s3ObjectKeys,
               filenames: [filenameWithoutExtension!],
               document_types: [docTypes[fileIndex] || "sustainability_report"],
             };
@@ -320,7 +330,7 @@ function ResultsContent() {
           jobIdsToPoll = jobIds;
         }
 
-        setAnalysisProgress(null); // Clear progress bar since we use dots now
+        setProgress(null); // Bar done — GRI type dots take over
 
         // Poll for status of multiple jobs
         let localPendingJobs = [...jobIdsToPoll];
@@ -474,7 +484,7 @@ function ResultsContent() {
         );
         setPendingJobs([]);
         setApiLoading(false);
-        setAnalysisProgress(null);
+        setProgress(null);
       }
     }
 
@@ -786,18 +796,26 @@ function ResultsContent() {
         <div className="flex-1 overflow-y-auto p-4">
           {apiLoading && allIndicators.length === 0 ? (
             <div className="py-4 space-y-6">
-              {analysisProgress && (
+              {progress && (
                 <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg mb-6">
-                  <h3 className="text-xl font-bold text-white mb-3">
-                    {analysisProgress.currentType}
-                  </h3>
-                  <div className="w-full bg-gray-900 rounded-full h-3 mb-3 overflow-hidden">
+                  <div className="flex justify-between items-center mb-2">
+                    <h3 className="text-sm font-semibold text-gray-300">
+                      {progress.label}
+                    </h3>
+                    <span className="text-sm font-bold text-blue-400">
+                      {progress.percent}%
+                    </span>
+                  </div>
+                  {progress.detail && (
+                    <p className="text-xs text-gray-500 mb-2 truncate">
+                      📤 {progress.detail}
+                    </p>
+                  )}
+                  <div className="w-full bg-gray-900 rounded-full h-3 overflow-hidden">
                     <div
-                      className="bg-gradient-to-r from-blue-500 to-indigo-500 h-3 rounded-full transition-all duration-500 ease-out"
-                      style={{
-                        width: `${(analysisProgress.current / analysisProgress.total) * 100}%`,
-                      }}
-                    ></div>
+                      className="bg-gradient-to-r from-blue-500 to-cyan-400 h-3 rounded-full transition-all duration-300 ease-out"
+                      style={{ width: `${progress.percent}%` }}
+                    />
                   </div>
                 </div>
               )}
